@@ -26,6 +26,8 @@ interface AppState {
   gitStatus: GitStatus
   todos: Record<string, TodoItem[]>
   sessionDiffs: Record<string, SnapshotFileDiff[]>
+  pendingPermissions: Record<string, PermissionRequest[]>
+  pendingQuestions: Record<string, QuestionRequest[]>
   pendingPermission: PermissionRequest | null
   pendingQuestion: QuestionRequest | null
   authRequired: boolean
@@ -93,8 +95,12 @@ type AppAction =
   | { type: "SET_GIT_STATUS"; status: GitStatus }
   | { type: "SET_TODOS"; sessionID: string; todos: TodoItem[] }
   | { type: "SET_SESSION_DIFF"; sessionID: string; diff: SnapshotFileDiff[] }
+  | { type: "SET_PENDING_PERMISSIONS"; permissions: PermissionRequest[] }
+  | { type: "UPSERT_PENDING_PERMISSION"; permission: PermissionRequest }
   | { type: "SET_PENDING_PERMISSION"; permission: PermissionRequest | null }
   | { type: "CLEAR_PENDING_PERMISSION"; permissionID: string }
+  | { type: "SET_PENDING_QUESTIONS"; questions: QuestionRequest[] }
+  | { type: "UPSERT_PENDING_QUESTION"; question: QuestionRequest }
   | { type: "SET_PENDING_QUESTION"; question: QuestionRequest | null }
   | { type: "CLEAR_PENDING_QUESTION"; requestID: string }
   | { type: "SET_AUTH_REQUIRED"; required: boolean }
@@ -115,6 +121,8 @@ const initialState: AppState = {
   gitStatus: { added: 0, modified: 0, deleted: 0 },
   todos: {},
   sessionDiffs: {},
+  pendingPermissions: {},
+  pendingQuestions: {},
   pendingPermission: null,
   pendingQuestion: null,
   authRequired: false,
@@ -158,7 +166,12 @@ function appReducer(state: AppState, action: AppAction): AppState {
       } else {
         localStorage.removeItem(ACTIVE_SESSION_KEY)
       }
-      return { ...state, activeSessionID: action.sessionID }
+      return {
+        ...state,
+        activeSessionID: action.sessionID,
+        pendingPermission: action.sessionID ? (state.pendingPermissions[action.sessionID]?.[0] ?? null) : null,
+        pendingQuestion: action.sessionID ? (state.pendingQuestions[action.sessionID]?.[0] ?? null) : null,
+      }
     case "SET_MESSAGES": {
       const existing = state.messages[action.sessionID] || []
       const loadedIds = new Set(action.messages.map((message) => message.id))
@@ -251,14 +264,83 @@ function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, todos: { ...state.todos, [action.sessionID]: action.todos } }
     case "SET_SESSION_DIFF":
       return { ...state, sessionDiffs: { ...state.sessionDiffs, [action.sessionID]: action.diff } }
+    case "SET_PENDING_PERMISSIONS": {
+      const pendingPermissions: Record<string, PermissionRequest[]> = {}
+      for (const permission of action.permissions) {
+        pendingPermissions[permission.sessionID] = [...(pendingPermissions[permission.sessionID] ?? []), permission]
+      }
+      return {
+        ...state,
+        pendingPermissions,
+        pendingPermission: state.activeSessionID ? (pendingPermissions[state.activeSessionID]?.[0] ?? null) : null,
+      }
+    }
+    case "UPSERT_PENDING_PERMISSION": {
+      const sessionPermissions = state.pendingPermissions[action.permission.sessionID] ?? []
+      const nextSessionPermissions = sessionPermissions.some((item) => item.id === action.permission.id)
+        ? sessionPermissions.map((item) => (item.id === action.permission.id ? action.permission : item))
+        : [...sessionPermissions, action.permission]
+      const pendingPermissions = { ...state.pendingPermissions, [action.permission.sessionID]: nextSessionPermissions }
+      return {
+        ...state,
+        pendingPermissions,
+        pendingPermission:
+          state.activeSessionID === action.permission.sessionID ? (state.pendingPermission ?? action.permission) : state.pendingPermission,
+      }
+    }
     case "SET_PENDING_PERMISSION":
       return { ...state, pendingPermission: action.permission }
-    case "CLEAR_PENDING_PERMISSION":
-      return state.pendingPermission?.id === action.permissionID ? { ...state, pendingPermission: null } : state
+    case "CLEAR_PENDING_PERMISSION": {
+      const pendingPermissions = Object.fromEntries(
+        Object.entries(state.pendingPermissions)
+          .map(([sessionID, permissions]) => [sessionID, permissions.filter((item) => item.id !== action.permissionID)] as const)
+          .filter(([, permissions]) => permissions.length > 0),
+      )
+      const activePending = state.activeSessionID ? (pendingPermissions[state.activeSessionID]?.[0] ?? null) : null
+      return {
+        ...state,
+        pendingPermissions,
+        pendingPermission: state.pendingPermission?.id === action.permissionID ? activePending : state.pendingPermission,
+      }
+    }
+    case "SET_PENDING_QUESTIONS": {
+      const pendingQuestions: Record<string, QuestionRequest[]> = {}
+      for (const question of action.questions) {
+        pendingQuestions[question.sessionID] = [...(pendingQuestions[question.sessionID] ?? []), question]
+      }
+      return {
+        ...state,
+        pendingQuestions,
+        pendingQuestion: state.activeSessionID ? (pendingQuestions[state.activeSessionID]?.[0] ?? null) : null,
+      }
+    }
+    case "UPSERT_PENDING_QUESTION": {
+      const sessionQuestions = state.pendingQuestions[action.question.sessionID] ?? []
+      const nextSessionQuestions = sessionQuestions.some((item) => item.id === action.question.id)
+        ? sessionQuestions.map((item) => (item.id === action.question.id ? action.question : item))
+        : [...sessionQuestions, action.question]
+      const pendingQuestions = { ...state.pendingQuestions, [action.question.sessionID]: nextSessionQuestions }
+      return {
+        ...state,
+        pendingQuestions,
+        pendingQuestion: state.activeSessionID === action.question.sessionID ? (state.pendingQuestion ?? action.question) : state.pendingQuestion,
+      }
+    }
     case "SET_PENDING_QUESTION":
       return { ...state, pendingQuestion: action.question }
-    case "CLEAR_PENDING_QUESTION":
-      return state.pendingQuestion?.id === action.requestID ? { ...state, pendingQuestion: null } : state
+    case "CLEAR_PENDING_QUESTION": {
+      const pendingQuestions = Object.fromEntries(
+        Object.entries(state.pendingQuestions)
+          .map(([sessionID, questions]) => [sessionID, questions.filter((item) => item.id !== action.requestID)] as const)
+          .filter(([, questions]) => questions.length > 0),
+      )
+      const activePending = state.activeSessionID ? (pendingQuestions[state.activeSessionID]?.[0] ?? null) : null
+      return {
+        ...state,
+        pendingQuestions,
+        pendingQuestion: state.pendingQuestion?.id === action.requestID ? activePending : state.pendingQuestion,
+      }
+    }
     case "SET_AUTH_REQUIRED":
       return { ...state, authRequired: action.required }
     case "SET_AUTH_DIALOG_OPEN":

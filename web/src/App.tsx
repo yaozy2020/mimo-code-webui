@@ -16,7 +16,7 @@ function AppContent() {
   const [showDiagnostics, setShowDiagnostics] = useState(false)
   const [showSidebar, setShowSidebar] = useState(false)
   const dispatch = useAppDispatch()
-  const { activeSessionID, settings, authRequired } = useAppState()
+  const { settings, authRequired } = useAppState()
 
   useStreamingMessage()
   useMimoStatus()
@@ -33,9 +33,8 @@ function AppContent() {
     const loadPendingPermissions = async () => {
       try {
         const permissions = await listPermissions()
-        if (cancelled || permissions.length === 0) return
-        const permission = permissions.find((item) => item.sessionID === activeSessionID) ?? permissions[0]
-        dispatch({ type: "SET_PENDING_PERMISSION", permission })
+        if (cancelled) return
+        dispatch({ type: "SET_PENDING_PERMISSIONS", permissions })
       } catch (error) {
         console.error("[App] failed to load pending permissions:", error)
       }
@@ -45,7 +44,7 @@ function AppContent() {
     return () => {
       cancelled = true
     }
-  }, [activeSessionID, dispatch])
+  }, [dispatch])
 
   useEffect(() => {
     let cancelled = false
@@ -53,9 +52,8 @@ function AppContent() {
     const loadPendingQuestions = async () => {
       try {
         const questions = await listQuestions()
-        if (cancelled || questions.length === 0) return
-        const question = questions.find((item) => item.sessionID === activeSessionID) ?? questions[0]
-        dispatch({ type: "SET_PENDING_QUESTION", question })
+        if (cancelled) return
+        dispatch({ type: "SET_PENDING_QUESTIONS", questions })
       } catch (error) {
         console.error("[App] failed to load pending questions:", error)
       }
@@ -65,7 +63,7 @@ function AppContent() {
     return () => {
       cancelled = true
     }
-  }, [activeSessionID, dispatch])
+  }, [dispatch])
 
   return (
     <div className={cn("flex h-screen flex-col", settings.theme)}>

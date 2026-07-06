@@ -86,7 +86,7 @@ function handleEvent(event: StreamEvent, dispatch: ReturnType<typeof useAppDispa
     }
     case "permission.asked": {
       const permission = event.properties as PermissionRequest
-      dispatch({ type: "SET_PENDING_PERMISSION", permission })
+      dispatch({ type: "UPSERT_PENDING_PERMISSION", permission })
       dispatch({
         type: "SET_AGENT_STATUS",
         sessionID: permission.sessionID,
@@ -101,7 +101,7 @@ function handleEvent(event: StreamEvent, dispatch: ReturnType<typeof useAppDispa
     }
     case "question.asked": {
       const question = event.properties as QuestionRequest
-      dispatch({ type: "SET_PENDING_QUESTION", question })
+      dispatch({ type: "UPSERT_PENDING_QUESTION", question })
       dispatch({
         type: "SET_AGENT_STATUS",
         sessionID: question.sessionID,

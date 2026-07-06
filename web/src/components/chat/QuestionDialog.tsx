@@ -72,7 +72,7 @@ export function QuestionDialog() {
     setError(null)
     try {
       await respondQuestion(pendingQuestion.id, buildAnswers())
-      dispatch({ type: "SET_PENDING_QUESTION", question: null })
+      dispatch({ type: "CLEAR_PENDING_QUESTION", requestID: pendingQuestion.id })
       dispatch({
         type: "SET_AGENT_STATUS",
         sessionID: pendingQuestion.sessionID,
@@ -91,7 +91,7 @@ export function QuestionDialog() {
     setError(null)
     try {
       await rejectQuestion(pendingQuestion.id)
-      dispatch({ type: "SET_PENDING_QUESTION", question: null })
+      dispatch({ type: "CLEAR_PENDING_QUESTION", requestID: pendingQuestion.id })
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error))
     } finally {

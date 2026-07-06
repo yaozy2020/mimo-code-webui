@@ -1,6 +1,8 @@
 import { Clock3, MessageSquarePlus, Trash2 } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { useSessions } from "@/hooks/useSessions"
+import { useAppState } from "@/stores/appStore"
 import { cn } from "@/lib/utils"
 
 function formatSessionTime(updated?: number) {
@@ -20,6 +22,7 @@ interface SidebarProps {
 
 function SessionList({ onSelect }: { onSelect?: () => void }) {
   const { sessions, activeSessionID, create, setActive, remove } = useSessions()
+  const { agentStatus, pendingPermissions, pendingQuestions, todos, sessionDiffs } = useAppState()
 
   return (
     <>
@@ -40,6 +43,11 @@ function SessionList({ onSelect }: { onSelect?: () => void }) {
         )}
         {sessions.map((session) => {
           const active = activeSessionID === session.id
+          const status = agentStatus[session.id]?.state
+          const permissionCount = pendingPermissions[session.id]?.length ?? 0
+          const questionCount = pendingQuestions[session.id]?.length ?? 0
+          const todoCount = todos[session.id]?.length ?? 0
+          const diffCount = sessionDiffs[session.id]?.length ?? 0
           return (
             <div
               key={session.id}
@@ -63,6 +71,17 @@ function SessionList({ onSelect }: { onSelect?: () => void }) {
                   <span className="truncate">{formatSessionTime(session.time?.updated ?? session.time?.created)}</span>
                 </div>
                 {session.directory && <div className="mt-1 truncate text-xs text-muted-foreground">{session.directory}</div>}
+                {(status || permissionCount > 0 || questionCount > 0 || todoCount > 0 || diffCount > 0) && (
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {status === "busy" && <Badge variant="secondary">运行中</Badge>}
+                    {status === "waiting_for_permission" && <Badge variant="destructive">等待授权</Badge>}
+                    {status === "waiting_for_question" && <Badge variant="destructive">等待回答</Badge>}
+                    {permissionCount > 0 && <Badge variant="outline">授权 {permissionCount}</Badge>}
+                    {questionCount > 0 && <Badge variant="outline">提问 {questionCount}</Badge>}
+                    {todoCount > 0 && <Badge variant="outline">任务 {todoCount}</Badge>}
+                    {diffCount > 0 && <Badge variant="outline">变更 {diffCount}</Badge>}
+                  </div>
+                )}
               </button>
               <Button
                 size="icon"

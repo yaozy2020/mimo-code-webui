@@ -79,7 +79,7 @@ export function PermissionDialog() {
         sessionID: pendingPermission.sessionID,
         message,
       })
-      dispatch({ type: "SET_PENDING_PERMISSION", permission: null })
+      dispatch({ type: "CLEAR_PENDING_PERMISSION", permissionID: pendingPermission.id })
       dispatch({
         type: "SET_AGENT_STATUS",
         sessionID: pendingPermission.sessionID,

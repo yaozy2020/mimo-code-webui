@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from "react"
-import { createSession, deleteSession, forkSession, listSessions, updateSession } from "@/api/session"
+import { createSession, deleteSession, forkSession, getTodos, listSessions, updateSession } from "@/api/session"
 import { useAppDispatch, useAppState } from "@/stores/appStore"
 
 export function useSessions() {
@@ -10,6 +10,12 @@ export function useSessions() {
     try {
       const data = await listSessions()
       dispatch({ type: "SET_SESSIONS", sessions: data })
+      const todoResults = await Promise.allSettled(data.map((session) => getTodos(session.id)))
+      todoResults.forEach((result, index) => {
+        if (result.status === "fulfilled") {
+          dispatch({ type: "SET_TODOS", sessionID: data[index].id, todos: result.value })
+        }
+      })
     } catch (error) {
       console.error("[useSessions] failed to load sessions:", error)
     }
