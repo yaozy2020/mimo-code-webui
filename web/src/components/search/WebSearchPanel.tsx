@@ -9,7 +9,9 @@ import type { Message } from "@/types"
 
 export function WebSearchPanel() {
   const dispatch = useAppDispatch()
-  const { activeSessionID } = useAppState()
+  const { activeSessionID, sessions } = useAppState()
+  const activeSession = activeSessionID ? sessions.find((session) => session.id === activeSessionID) : undefined
+  const activeDirectory = activeSession?.directory
   const [query, setQuery] = useState("")
   const [busy, setBusy] = useState(false)
 
@@ -41,6 +43,7 @@ export function WebSearchPanel() {
       await sendPrompt(activeSessionID, {
         agent: "explore",
         parts: [{ type: "text", content: prompt }],
+        directory: activeDirectory,
       })
       setQuery("")
     } catch (error) {
@@ -56,7 +59,7 @@ export function WebSearchPanel() {
   }
 
   if (!activeSessionID) {
-    return <div className="p-4 text-muted-foreground">Select a session first</div>
+    return <div className="p-4 text-muted-foreground">请先选择或新建会话</div>
   }
 
   return (
@@ -65,16 +68,16 @@ export function WebSearchPanel() {
         <Input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Ask a question that needs web search..."
+          placeholder="输入需要联网搜索的问题..."
           onKeyDown={(e) => e.key === "Enter" && handleSearch()}
         />
         <Button onClick={handleSearch} disabled={busy || !query.trim()}>
           <Search className="mr-1 h-4 w-4" />
-          Search
+          搜索
         </Button>
       </div>
       <p className="text-sm text-muted-foreground">
-        The model will decide whether to call the web_search tool based on your question.
+        模型会根据问题决定是否调用联网搜索工具。
       </p>
     </div>
   )

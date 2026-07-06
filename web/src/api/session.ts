@@ -6,6 +6,26 @@ export interface SessionListResponse {
   data?: Session[]
 }
 
+export interface ExperimentalSessionListResponse {
+  sessions?: unknown[]
+  data?: unknown[]
+  results?: unknown[]
+}
+
+function normalizeExperimentalSessions(items: unknown[]) {
+  return items.flatMap((item) => {
+    if (typeof item !== "object" || item === null) return []
+    if ("id" in item && typeof item.id === "string") return [item as Session]
+    if ("session" in item) {
+      const session = item.session
+      if (typeof session === "object" && session !== null && "id" in session && typeof session.id === "string") {
+        return [session as Session]
+      }
+    }
+    return []
+  })
+}
+
 function isEmptySession(session: Session) {
   return !session.title || session.title.startsWith("New session - ")
 }
@@ -19,23 +39,38 @@ function sortSessions(sessions: Session[]) {
   })
 }
 
-export async function listSessions(): Promise<Session[]> {
-  const result = await fetchJson<SessionListResponse | Session[]>("/session")
+export function withDirectory(path: string, directory?: string) {
+  const value = directory?.trim()
+  if (!value) return path
+  const separator = path.includes("?") ? "&" : "?"
+  return `${path}${separator}directory=${encodeURIComponent(value)}`
+}
+
+export async function listSessions(directory?: string): Promise<Session[]> {
+  const result = await fetchJson<SessionListResponse | Session[]>(withDirectory("/session", directory))
   if (Array.isArray(result)) return sortSessions(result)
   return sortSessions(result.sessions ?? result.data ?? [])
 }
 
-export async function createSession(directory?: string): Promise<Session> {
-  const body: Record<string, unknown> = {}
-  if (directory) body.directory = directory
-  return fetchJson<Session>("/session", {
+export async function discoverSessions(): Promise<Session[]> {
+  try {
+    const result = await fetchJson<ExperimentalSessionListResponse | Session[]>("/experimental/session?limit=100")
+    if (Array.isArray(result)) return sortSessions(normalizeExperimentalSessions(result))
+    return sortSessions(normalizeExperimentalSessions(result.sessions ?? result.data ?? result.results ?? []))
+  } catch {
+    return listSessions()
+  }
+}
+
+export async function createSession(input: { directory?: string; title?: string } = {}): Promise<Session> {
+  return fetchJson<Session>(withDirectory("/session", input.directory), {
     method: "POST",
-    body: JSON.stringify(body),
+    body: JSON.stringify(input.title ? { title: input.title } : {}),
   })
 }
 
-export async function getSession(sessionID: string): Promise<Session> {
-  return fetchJson<Session>(`/session/${sessionID}`)
+export async function getSession(sessionID: string, directory?: string): Promise<Session> {
+  return fetchJson<Session>(withDirectory(`/session/${sessionID}`, directory))
 }
 
 interface RawMessage {
@@ -90,40 +125,40 @@ function rawToMessage(raw: RawMessage): Message {
   }
 }
 
-export async function getMessages(sessionID: string, limit = 50, before?: string): Promise<Message[]> {
+export async function getMessages(sessionID: string, limit = 50, before?: string, directory?: string): Promise<Message[]> {
   const params = new URLSearchParams()
   params.set("limit", String(limit))
   if (before) params.set("before", before)
   const result = await fetchJson<RawMessage[] | {
     messages?: RawMessage[]
     data?: RawMessage[]
-  }>(`/session/${sessionID}/message?${params.toString()}`)
+  }>(withDirectory(`/session/${sessionID}/message?${params.toString()}`, directory))
   if (Array.isArray(result)) return result.map(rawToMessage)
   const rawMessages = result.messages ?? result.data ?? []
   return rawMessages.map(rawToMessage)
 }
 
-export async function getTodos(sessionID: string): Promise<TodoItem[]> {
-  return fetchJson<TodoItem[]>(`/session/${sessionID}/todo`)
+export async function getTodos(sessionID: string, directory?: string): Promise<TodoItem[]> {
+  return fetchJson<TodoItem[]>(withDirectory(`/session/${sessionID}/todo`, directory))
 }
 
-export async function getSessionDiff(sessionID: string, messageID: string): Promise<SnapshotFileDiff[]> {
-  return fetchJson<SnapshotFileDiff[]>(`/session/${sessionID}/diff?messageID=${encodeURIComponent(messageID)}`)
+export async function getSessionDiff(sessionID: string, messageID: string, directory?: string): Promise<SnapshotFileDiff[]> {
+  return fetchJson<SnapshotFileDiff[]>(withDirectory(`/session/${sessionID}/diff?messageID=${encodeURIComponent(messageID)}`, directory))
 }
 
-export async function deleteSession(sessionID: string): Promise<void> {
-  await fetchJson(`/session/${sessionID}`, { method: "DELETE" })
+export async function deleteSession(sessionID: string, directory?: string): Promise<void> {
+  await fetchJson(withDirectory(`/session/${sessionID}`, directory), { method: "DELETE" })
 }
 
-export async function updateSession(sessionID: string, updates: Partial<Session>): Promise<Session> {
-  return fetchJson<Session>(`/session/${sessionID}`, {
+export async function updateSession(sessionID: string, updates: Partial<Session>, directory?: string): Promise<Session> {
+  return fetchJson<Session>(withDirectory(`/session/${sessionID}`, directory), {
     method: "PATCH",
     body: JSON.stringify(updates),
   })
 }
 
-export async function forkSession(sessionID: string, messageID: string): Promise<Session> {
-  return fetchJson<Session>(`/session/${sessionID}/fork`, {
+export async function forkSession(sessionID: string, messageID: string, directory?: string): Promise<Session> {
+  return fetchJson<Session>(withDirectory(`/session/${sessionID}/fork`, directory), {
     method: "POST",
     body: JSON.stringify({ messageID }),
   })

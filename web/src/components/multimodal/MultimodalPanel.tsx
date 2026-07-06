@@ -11,7 +11,9 @@ import type { Message } from "@/types"
 
 export function MultimodalPanel() {
   const dispatch = useAppDispatch()
-  const { activeSessionID } = useAppState()
+  const { activeSessionID, sessions } = useAppState()
+  const activeSession = activeSessionID ? sessions.find((session) => session.id === activeSessionID) : undefined
+  const activeDirectory = activeSession?.directory
   const [kind, setKind] = useState<"image" | "audio" | "video">("image")
   const [source, setSource] = useState("")
   const [prompt, setPrompt] = useState("")
@@ -57,6 +59,7 @@ export function MultimodalPanel() {
           { type: kind, url: source },
           { type: "text", content: prompt },
         ],
+        directory: activeDirectory,
       })
       setSource("")
       setPrompt("")
@@ -73,7 +76,7 @@ export function MultimodalPanel() {
   }
 
   if (!activeSessionID) {
-    return <div className="p-4 text-muted-foreground">Select a session first</div>
+    return <div className="p-4 text-muted-foreground">请先选择或新建会话</div>
   }
 
   return (
@@ -81,13 +84,13 @@ export function MultimodalPanel() {
       <Tabs value={kind} onValueChange={(v) => setKind(v as typeof kind)}>
         <TabsList>
           <TabsTrigger value="image">
-            <Image className="mr-1 h-4 w-4" /> Image
+            <Image className="mr-1 h-4 w-4" /> 图片
           </TabsTrigger>
           <TabsTrigger value="audio">
-            <Mic className="mr-1 h-4 w-4" /> Audio
+            <Mic className="mr-1 h-4 w-4" /> 音频
           </TabsTrigger>
           <TabsTrigger value="video">
-            <Video className="mr-1 h-4 w-4" /> Video
+            <Video className="mr-1 h-4 w-4" /> 视频
           </TabsTrigger>
         </TabsList>
         <TabsContent value={kind}>
@@ -95,7 +98,7 @@ export function MultimodalPanel() {
             <Input
               value={source}
               onChange={(e) => setSource(e.target.value)}
-              placeholder={`Paste ${kind} URL or upload file`}
+              placeholder="粘贴媒体 URL 或上传文件"
             />
             <Input type="file" accept={`${kind}/*`} onChange={handleFileChange} />
             {source && kind === "image" && (
@@ -104,10 +107,10 @@ export function MultimodalPanel() {
             <Textarea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              placeholder="Ask about this..."
+              placeholder="描述你想让模型分析的内容..."
             />
             <Button onClick={handleSend} disabled={busy || !source}>
-              Send
+              发送
             </Button>
           </div>
         </TabsContent>

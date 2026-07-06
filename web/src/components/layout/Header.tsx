@@ -4,7 +4,7 @@ import { fetchAvailableModels, type RuntimeModel } from "@/api/client"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Select } from "@/components/ui/select"
-import { useNewChat } from "@/hooks/useNewChat"
+import { WorkspaceSessionDialog } from "@/components/chat/WorkspaceSessionDialog"
 import { useAppDispatch, useAppState } from "@/stores/appStore"
 
 interface HeaderProps {
@@ -15,10 +15,12 @@ interface HeaderProps {
 
 export function Header({ onOpenSidebar, onOpenSettings, onOpenDiagnostics }: HeaderProps) {
   const dispatch = useAppDispatch()
-  const { activeSessionID, agentStatus, settings, status } = useAppState()
+  const { activeSessionID, agentStatus, currentWorkspace, sessions, settings, status } = useAppState()
   const [runtimeModels, setRuntimeModels] = useState<RuntimeModel[]>([])
-  const newChat = useNewChat()
+  const [workspaceDialogOpen, setWorkspaceDialogOpen] = useState(false)
   const sessionState = activeSessionID ? agentStatus[activeSessionID]?.state ?? "idle" : "idle"
+  const activeSession = activeSessionID ? sessions.find((session) => session.id === activeSessionID) : undefined
+  const defaultWorkspace = activeSession?.directory ?? currentWorkspace
 
   useEffect(() => {
     let cancelled = false
@@ -79,7 +81,7 @@ export function Header({ onOpenSidebar, onOpenSettings, onOpenDiagnostics }: Hea
       </div>
       <div className="flex shrink-0 items-center gap-1 sm:gap-2">
         <Badge variant={sessionState === "busy" ? "default" : "secondary"}>{sessionState}</Badge>
-        <Button size="sm" variant="ghost" onClick={() => newChat()} className="hidden gap-1 sm:inline-flex">
+        <Button size="sm" variant="ghost" onClick={() => setWorkspaceDialogOpen(true)} className="hidden gap-1 sm:inline-flex">
           <Plus className="h-4 w-4" />
           新建
         </Button>
@@ -90,6 +92,7 @@ export function Header({ onOpenSidebar, onOpenSettings, onOpenDiagnostics }: Hea
           <Settings className="h-5 w-5" />
         </Button>
       </div>
+      <WorkspaceSessionDialog open={workspaceDialogOpen} onOpenChange={setWorkspaceDialogOpen} defaultWorkspace={defaultWorkspace} />
     </header>
   )
 }

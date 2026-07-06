@@ -14,6 +14,9 @@ import type {
 interface AppState {
   sessions: Session[]
   activeSessionID: string | null
+  currentWorkspace: string | null
+  ownedSessionIDs: string[]
+  attachedSessionIDs: string[]
   messages: Record<string, Message[]>
   status: {
     mimoHealthy: boolean
@@ -43,10 +46,13 @@ interface AppState {
 
 const ACTIVE_SESSION_KEY = "mimo-webui-active-session"
 const OWNED_SESSION_IDS_KEY = "mimo-webui-owned-session-ids"
+const ATTACHED_SESSION_IDS_KEY = "mimo-webui-attached-session-ids"
+const CURRENT_WORKSPACE_KEY = "mimo-webui-current-workspace"
+const SESSION_CACHE_KEY = "mimo-webui-session-cache"
 
-function getOwnedSessionIDs() {
+function getStoredSessionIDs(key: string) {
   try {
-    const value = localStorage.getItem(OWNED_SESSION_IDS_KEY)
+    const value = localStorage.getItem(key)
     if (!value) return new Set<string>()
     const parsed = JSON.parse(value)
     if (!Array.isArray(parsed)) return new Set<string>()
@@ -56,8 +62,28 @@ function getOwnedSessionIDs() {
   }
 }
 
+function setStoredSessionIDs(key: string, ids: Set<string>) {
+  localStorage.setItem(key, JSON.stringify([...ids]))
+}
+
+function getOwnedSessionIDs() {
+  return getStoredSessionIDs(OWNED_SESSION_IDS_KEY)
+}
+
+function getAttachedSessionIDs() {
+  return getStoredSessionIDs(ATTACHED_SESSION_IDS_KEY)
+}
+
+function getVisibleSessionIDs() {
+  return new Set([...getOwnedSessionIDs(), ...getAttachedSessionIDs()])
+}
+
 function setOwnedSessionIDs(ids: Set<string>) {
-  localStorage.setItem(OWNED_SESSION_IDS_KEY, JSON.stringify([...ids]))
+  setStoredSessionIDs(OWNED_SESSION_IDS_KEY, ids)
+}
+
+function setAttachedSessionIDs(ids: Set<string>) {
+  setStoredSessionIDs(ATTACHED_SESSION_IDS_KEY, ids)
 }
 
 function rememberOwnedSessionID(sessionID: string) {
@@ -72,15 +98,58 @@ function forgetOwnedSessionID(sessionID: string) {
   setOwnedSessionIDs(ids)
 }
 
+function rememberAttachedSessionID(sessionID: string) {
+  const ids = getAttachedSessionIDs()
+  ids.add(sessionID)
+  setAttachedSessionIDs(ids)
+}
+
+function forgetAttachedSessionID(sessionID: string) {
+  const ids = getAttachedSessionIDs()
+  ids.delete(sessionID)
+  setAttachedSessionIDs(ids)
+}
+
 function getInitialActiveSessionID() {
   const sessionID = localStorage.getItem(ACTIVE_SESSION_KEY)
   if (!sessionID) return null
-  return getOwnedSessionIDs().has(sessionID) ? sessionID : null
+  return getVisibleSessionIDs().has(sessionID) ? sessionID : null
+}
+
+function getCachedSessions() {
+  try {
+    const value = localStorage.getItem(SESSION_CACHE_KEY)
+    if (!value) return []
+    const parsed = JSON.parse(value)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((session): session is Session => typeof session?.id === "string")
+  } catch {
+    return []
+  }
+}
+
+function setCachedSessions(sessions: Session[]) {
+  const visibleSessionIDs = getVisibleSessionIDs()
+  const visibleSessions = sessions.filter(
+    (session, index) => visibleSessionIDs.has(session.id) && sessions.findIndex((item) => item.id === session.id) === index,
+  )
+  localStorage.setItem(SESSION_CACHE_KEY, JSON.stringify(visibleSessions))
+}
+
+function upsertCachedSession(session: Session) {
+  const cached = getCachedSessions()
+  setCachedSessions([session, ...cached.filter((item) => item.id !== session.id)])
+}
+
+function removeCachedSession(sessionID: string) {
+  setCachedSessions(getCachedSessions().filter((session) => session.id !== sessionID))
 }
 
 type AppAction =
   | { type: "SET_SESSIONS"; sessions: Session[] }
-  | { type: "ADD_SESSION"; session: Session }
+  | { type: "ADD_SESSION"; session: Session; owned?: boolean }
+  | { type: "ATTACH_SESSION"; sessionID: string }
+  | { type: "DETACH_SESSION"; sessionID: string }
   | { type: "UPDATE_SESSION"; session: Session }
   | { type: "DELETE_SESSION"; sessionID: string }
   | { type: "SET_ACTIVE_SESSION"; sessionID: string | null }
@@ -105,11 +174,15 @@ type AppAction =
   | { type: "CLEAR_PENDING_QUESTION"; requestID: string }
   | { type: "SET_AUTH_REQUIRED"; required: boolean }
   | { type: "SET_AUTH_DIALOG_OPEN"; open: boolean }
+  | { type: "SET_CURRENT_WORKSPACE"; workspace: string | null }
   | { type: "UPDATE_SETTINGS"; settings: Partial<AppState["settings"]> }
 
 const initialState: AppState = {
-  sessions: [],
+  sessions: getCachedSessions(),
   activeSessionID: getInitialActiveSessionID(),
+  currentWorkspace: localStorage.getItem(CURRENT_WORKSPACE_KEY),
+  ownedSessionIDs: [...getOwnedSessionIDs()],
+  attachedSessionIDs: [...getAttachedSessionIDs()],
   messages: {},
   status: {
     mimoHealthy: false,
@@ -143,25 +216,54 @@ function messageSignature(message: Message) {
 function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case "SET_SESSIONS":
-      return { ...state, sessions: action.sessions }
-    case "ADD_SESSION":
-      rememberOwnedSessionID(action.session.id)
-      return { ...state, sessions: [action.session, ...state.sessions] }
+      setCachedSessions([...action.sessions, ...state.sessions])
+      return {
+        ...state,
+        sessions: [...action.sessions, ...state.sessions.filter((session) => !action.sessions.some((item) => item.id === session.id))],
+      }
+    case "ADD_SESSION": {
+      if (action.owned !== false) rememberOwnedSessionID(action.session.id)
+      upsertCachedSession(action.session)
+      return {
+        ...state,
+        sessions: [action.session, ...state.sessions.filter((session) => session.id !== action.session.id)],
+        ownedSessionIDs: [...getOwnedSessionIDs()],
+      }
+    }
+    case "ATTACH_SESSION":
+      rememberAttachedSessionID(action.sessionID)
+      setCachedSessions(state.sessions)
+      return { ...state, attachedSessionIDs: [...getAttachedSessionIDs()] }
+    case "DETACH_SESSION":
+      forgetAttachedSessionID(action.sessionID)
+      forgetOwnedSessionID(action.sessionID)
+      removeCachedSession(action.sessionID)
+      if (state.activeSessionID === action.sessionID) localStorage.removeItem(ACTIVE_SESSION_KEY)
+      return {
+        ...state,
+        activeSessionID: state.activeSessionID === action.sessionID ? null : state.activeSessionID,
+        ownedSessionIDs: [...getOwnedSessionIDs()],
+        attachedSessionIDs: [...getAttachedSessionIDs()],
+      }
     case "UPDATE_SESSION": {
       const sessions = state.sessions.map((s) => (s.id === action.session.id ? action.session : s))
+      setCachedSessions(sessions)
       return { ...state, sessions }
     }
     case "DELETE_SESSION":
       forgetOwnedSessionID(action.sessionID)
+      forgetAttachedSessionID(action.sessionID)
+      removeCachedSession(action.sessionID)
       if (state.activeSessionID === action.sessionID) localStorage.removeItem(ACTIVE_SESSION_KEY)
       return {
         ...state,
         sessions: state.sessions.filter((s) => s.id !== action.sessionID),
+        ownedSessionIDs: [...getOwnedSessionIDs()],
+        attachedSessionIDs: [...getAttachedSessionIDs()],
         activeSessionID: state.activeSessionID === action.sessionID ? null : state.activeSessionID,
       }
     case "SET_ACTIVE_SESSION":
       if (action.sessionID) {
-        rememberOwnedSessionID(action.sessionID)
         localStorage.setItem(ACTIVE_SESSION_KEY, action.sessionID)
       } else {
         localStorage.removeItem(ACTIVE_SESSION_KEY)
@@ -345,6 +447,12 @@ function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, authRequired: action.required }
     case "SET_AUTH_DIALOG_OPEN":
       return { ...state, authDialogOpen: action.open }
+    case "SET_CURRENT_WORKSPACE": {
+      const workspace = action.workspace?.trim() || null
+      if (workspace) localStorage.setItem(CURRENT_WORKSPACE_KEY, workspace)
+      else localStorage.removeItem(CURRENT_WORKSPACE_KEY)
+      return { ...state, currentWorkspace: workspace }
+    }
     case "UPDATE_SETTINGS": {
       const next = { ...state.settings, ...action.settings }
       if (action.settings.apiKey !== undefined) localStorage.setItem("mimo-webui-apikey", next.apiKey)

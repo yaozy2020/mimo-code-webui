@@ -1,4 +1,5 @@
 import { fetchJson } from "./client"
+import { withDirectory } from "./session"
 import type { MessagePart, PermissionRequest, QuestionRequest } from "@/types"
 
 export interface PromptPart {
@@ -37,9 +38,10 @@ export async function sendPrompt(
     model?: string
     parts: PromptPart[]
     variant?: string
+    directory?: string
   },
 ) {
-  return fetchJson(`/session/${sessionID}/prompt_async`, {
+  return fetchJson(withDirectory(`/session/${sessionID}/prompt_async`, input.directory), {
     method: "POST",
     body: JSON.stringify({
       sessionID,

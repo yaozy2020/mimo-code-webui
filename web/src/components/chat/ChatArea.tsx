@@ -1,19 +1,20 @@
 import { useCallback, useEffect, useState } from "react"
-import { Plus } from "lucide-react"
+import { Link, Plus } from "lucide-react"
 import { fetchRuntimeModels, runLocalPrompt } from "@/api/client"
 import { abortSession, modelSelectionToPayload, sendPrompt } from "@/api/message"
-import { createSession, getMessages, getSessionDiff, getTodos } from "@/api/session"
+import { getMessages, getSessionDiff, getTodos } from "@/api/session"
 import { Button } from "@/components/ui/button"
 import { FileChangesPanel } from "@/components/files/FileChangesPanel"
-import { useNewChat } from "@/hooks/useNewChat"
 import { createClientID } from "@/lib/utils"
 import { useAppDispatch, useAppState } from "@/stores/appStore"
 import type { Message } from "@/types"
+import { AttachSessionDialog } from "./AttachSessionDialog"
 import { InputBar, type PendingAttachment, type PromptMode } from "./InputBar"
 import { MessageList } from "./MessageList"
 import { PermissionDialog } from "./PermissionDialog"
 import { PromptToolbar } from "./PromptToolbar"
 import { QuestionDialog } from "./QuestionDialog"
+import { WorkspaceSessionDialog } from "./WorkspaceSessionDialog"
 
 const ASSISTANT_SYNC_ATTEMPTS = 30
 const ASSISTANT_SYNC_INTERVAL_MS = 1500
@@ -23,10 +24,10 @@ function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
 }
 
-async function waitForAssistantMessages(sessionID: string, knownAssistantIDs: Set<string>) {
+async function waitForAssistantMessages(sessionID: string, knownAssistantIDs: Set<string>, directory?: string) {
   for (let attempt = 0; attempt < ASSISTANT_SYNC_ATTEMPTS; attempt += 1) {
     await sleep(ASSISTANT_SYNC_INTERVAL_MS)
-    const msgs = await getMessages(sessionID)
+    const msgs = await getMessages(sessionID, 50, undefined, directory)
     const assistantMessages = msgs.filter(
       (message) => message.role === "assistant" && !knownAssistantIDs.has(message.id) && Boolean(message.content?.trim()),
     )
@@ -43,42 +44,14 @@ function latestUserMessageID(messages: Message[]) {
 
 export function ChatArea() {
   const dispatch = useAppDispatch()
-  const { activeSessionID, agentStatus, messages, sessionDiffs, settings } = useAppState()
-  const [loading, setLoading] = useState(true)
+  const { activeSessionID, agentStatus, currentWorkspace, messages, sessionDiffs, sessions, settings } = useAppState()
+  const [workspaceDialogOpen, setWorkspaceDialogOpen] = useState(false)
+  const [attachDialogOpen, setAttachDialogOpen] = useState(false)
   const [showFileChanges, setShowFileChanges] = useState(false)
-  const newChat = useNewChat()
+  const activeSession = activeSessionID ? sessions.find((session) => session.id === activeSessionID) : undefined
+  const activeDirectory = activeSession?.directory
 
   const busy = activeSessionID ? agentStatus[activeSessionID]?.state === "busy" : false
-
-  // On mount: restore the WebUI-owned session, or create a new one.
-  // Do not auto-pick the latest global session; it may be the user's active CLI conversation.
-  useEffect(() => {
-    if (activeSessionID) {
-      setLoading(false)
-      return
-    }
-    let cancelled = false
-    setLoading(true)
-
-    const init = async () => {
-      try {
-        if (cancelled) return
-        const session = await createSession()
-        if (cancelled) return
-        dispatch({ type: "ADD_SESSION", session })
-        dispatch({ type: "SET_ACTIVE_SESSION", sessionID: session.id })
-      } catch (error) {
-        console.error("[ChatArea] failed to init session:", error)
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-
-    init()
-    return () => {
-      cancelled = true
-    }
-  }, [activeSessionID, dispatch])
 
   // Load historical messages whenever the active session changes
   useEffect(() => {
@@ -87,12 +60,12 @@ export function ChatArea() {
 
     const load = async () => {
       try {
-        const msgs = await getMessages(activeSessionID)
+        const msgs = await getMessages(activeSessionID, 50, undefined, activeDirectory)
         if (cancelled) return
         dispatch({ type: "SET_MESSAGES", sessionID: activeSessionID, messages: msgs })
         const messageID = latestUserMessageID(msgs)
         if (messageID) {
-          const diff = await getSessionDiff(activeSessionID, messageID)
+          const diff = await getSessionDiff(activeSessionID, messageID, activeDirectory)
           if (!cancelled) dispatch({ type: "SET_SESSION_DIFF", sessionID: activeSessionID, diff })
         }
       } catch (error) {
@@ -104,7 +77,7 @@ export function ChatArea() {
     return () => {
       cancelled = true
     }
-  }, [activeSessionID, dispatch])
+  }, [activeDirectory, activeSessionID, dispatch])
 
   useEffect(() => {
     if (!activeSessionID) return
@@ -112,7 +85,7 @@ export function ChatArea() {
 
     const load = async () => {
       try {
-        const todos = await getTodos(activeSessionID)
+        const todos = await getTodos(activeSessionID, activeDirectory)
         if (cancelled) return
         dispatch({ type: "SET_TODOS", sessionID: activeSessionID, todos })
       } catch (error) {
@@ -124,7 +97,7 @@ export function ChatArea() {
     return () => {
       cancelled = true
     }
-  }, [activeSessionID, dispatch])
+  }, [activeDirectory, activeSessionID, dispatch])
 
   useEffect(() => {
     if (!activeSessionID) return
@@ -132,14 +105,17 @@ export function ChatArea() {
     const refresh = async () => {
       if (document.visibilityState !== "visible") return
       try {
-        const [msgs, todos] = await Promise.all([getMessages(activeSessionID), getTodos(activeSessionID)])
+        const [msgs, todos] = await Promise.all([
+          getMessages(activeSessionID, 50, undefined, activeDirectory),
+          getTodos(activeSessionID, activeDirectory),
+        ])
         if (!cancelled) {
           dispatch({ type: "SET_MESSAGES", sessionID: activeSessionID, messages: msgs })
           dispatch({ type: "SET_TODOS", sessionID: activeSessionID, todos })
         }
         const messageID = latestUserMessageID(msgs)
         if (messageID) {
-          const diff = await getSessionDiff(activeSessionID, messageID)
+          const diff = await getSessionDiff(activeSessionID, messageID, activeDirectory)
           if (!cancelled) dispatch({ type: "SET_SESSION_DIFF", sessionID: activeSessionID, diff })
         }
       } catch (error) {
@@ -152,7 +128,7 @@ export function ChatArea() {
       cancelled = true
       window.clearInterval(interval)
     }
-  }, [activeSessionID, dispatch])
+  }, [activeDirectory, activeSessionID, dispatch])
 
   const handleSend = useCallback(
     async (text: string, mode: PromptMode, attachments: PendingAttachment[] = []) => {
@@ -209,8 +185,9 @@ export function ChatArea() {
                 model: settings.model,
                 parts: promptParts,
                 variant: mode === "multimodal" ? "multimodal" : undefined,
+                directory: activeDirectory,
               })
-              void waitForAssistantMessages(activeSessionID, knownAssistantIDs)
+              void waitForAssistantMessages(activeSessionID, knownAssistantIDs, activeDirectory)
                 .then((assistantMessages) => {
                   assistantMessages?.forEach((message) => {
                     dispatch({ type: "ADD_MESSAGE", sessionID: activeSessionID, message })
@@ -241,8 +218,9 @@ export function ChatArea() {
           model: settings.model,
           parts: promptParts,
           variant: mode === "multimodal" ? "multimodal" : undefined,
+          directory: activeDirectory,
         })
-        void waitForAssistantMessages(activeSessionID, knownAssistantIDs)
+        void waitForAssistantMessages(activeSessionID, knownAssistantIDs, activeDirectory)
           .then((assistantMessages) => {
             assistantMessages?.forEach((message) => {
               dispatch({ type: "ADD_MESSAGE", sessionID: activeSessionID, message })
@@ -261,7 +239,7 @@ export function ChatArea() {
         dispatch({ type: "ADD_MESSAGE", sessionID: activeSessionID, message: errorMessage })
       }
     },
-    [activeSessionID, dispatch, messages, settings.model],
+    [activeDirectory, activeSessionID, dispatch, messages, settings.model],
   )
 
   const handleAbort = useCallback(async () => {
@@ -271,10 +249,27 @@ export function ChatArea() {
 
   const sessionMessages = activeSessionID ? messages[activeSessionID] || [] : []
 
-  if (loading) {
+  if (!activeSessionID) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center text-muted-foreground">
-        正在加载会话...
+      <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-5 px-4 text-center text-muted-foreground">
+        <div>
+          <h2 className="text-2xl font-semibold text-foreground">选择工作区开始</h2>
+          <p className="mt-2 max-w-xl text-sm">
+            新建会话前先选择代码目录，或明确接入已有 MiMo 会话；WebUI 不再自动打开当前 CLI 会话。
+          </p>
+        </div>
+        <div className="flex flex-wrap justify-center gap-2">
+          <Button onClick={() => setWorkspaceDialogOpen(true)} className="gap-2">
+            <Plus className="h-4 w-4" />
+            新建工作区会话
+          </Button>
+          <Button variant="outline" onClick={() => setAttachDialogOpen(true)} className="gap-2">
+            <Link className="h-4 w-4" />
+            接入已有会话
+          </Button>
+        </div>
+        <WorkspaceSessionDialog open={workspaceDialogOpen} onOpenChange={setWorkspaceDialogOpen} defaultWorkspace={currentWorkspace} />
+        <AttachSessionDialog open={attachDialogOpen} onOpenChange={setAttachDialogOpen} />
       </div>
     )
   }
@@ -298,9 +293,9 @@ export function ChatArea() {
                 </Button>
               ))}
             </div>
-            <Button variant="outline" onClick={() => newChat()} className="gap-2">
+            <Button variant="outline" onClick={() => setWorkspaceDialogOpen(true)} className="gap-2">
               <Plus className="h-4 w-4" />
-              新建会话
+              新建工作区会话
             </Button>
           </div>
         )}
@@ -308,6 +303,7 @@ export function ChatArea() {
         <PermissionDialog />
         <QuestionDialog />
         <InputBar onSend={handleSend} onAbort={handleAbort} busy={busy} />
+        <WorkspaceSessionDialog open={workspaceDialogOpen} onOpenChange={setWorkspaceDialogOpen} defaultWorkspace={activeDirectory} />
       </div>
       {activeSessionID && showFileChanges && (sessionDiffs[activeSessionID]?.length ?? 0) > 0 && (
         <FileChangesPanel diffs={sessionDiffs[activeSessionID]} onClose={() => setShowFileChanges(false)} />

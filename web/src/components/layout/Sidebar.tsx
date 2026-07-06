@@ -1,6 +1,9 @@
-import { Clock3, MessageSquarePlus, Trash2 } from "lucide-react"
+import { useState } from "react"
+import { Clock3, Link, MessageSquarePlus, Trash2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { AttachSessionDialog } from "@/components/chat/AttachSessionDialog"
+import { WorkspaceSessionDialog } from "@/components/chat/WorkspaceSessionDialog"
 import { useSessions } from "@/hooks/useSessions"
 import { useAppState } from "@/stores/appStore"
 import { cn } from "@/lib/utils"
@@ -21,8 +24,12 @@ interface SidebarProps {
 }
 
 function SessionList({ onSelect }: { onSelect?: () => void }) {
-  const { sessions, activeSessionID, create, setActive, remove } = useSessions()
-  const { agentStatus, pendingPermissions, pendingQuestions, todos, sessionDiffs } = useAppState()
+  const { sessions, activeSessionID, setActive, remove } = useSessions()
+  const { agentStatus, attachedSessionIDs, currentWorkspace, ownedSessionIDs, pendingPermissions, pendingQuestions, todos, sessionDiffs } = useAppState()
+  const [workspaceDialogOpen, setWorkspaceDialogOpen] = useState(false)
+  const [attachDialogOpen, setAttachDialogOpen] = useState(false)
+  const activeSession = sessions.find((session) => session.id === activeSessionID)
+  const defaultWorkspace = activeSession?.directory ?? currentWorkspace
 
   return (
     <>
@@ -30,19 +37,27 @@ function SessionList({ onSelect }: { onSelect?: () => void }) {
         <div>
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">工作区</h2>
           <p className="mt-1 text-lg font-semibold">会话</p>
+          <p className="mt-1 max-w-44 truncate text-xs text-muted-foreground">{defaultWorkspace ?? "未选择工作区"}</p>
         </div>
-        <Button size="icon" variant="ghost" onClick={() => create()} title="新建会话">
-          <MessageSquarePlus className="h-5 w-5" />
-        </Button>
+        <div className="flex gap-1">
+          <Button size="icon" variant="ghost" onClick={() => setAttachDialogOpen(true)} title="接入已有会话">
+            <Link className="h-5 w-5" />
+          </Button>
+          <Button size="icon" variant="ghost" onClick={() => setWorkspaceDialogOpen(true)} title="新建工作区会话">
+            <MessageSquarePlus className="h-5 w-5" />
+          </Button>
+        </div>
       </div>
       <div className="flex-1 overflow-auto p-2">
         {sessions.length === 0 && (
           <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-            暂无会话。可以从输入框开始一次新的 MiMo Code 任务。
+            暂无已接入会话。请先新建工作区会话，或接入已有 MiMo 会话。
           </div>
         )}
         {sessions.map((session) => {
           const active = activeSessionID === session.id
+          const owned = ownedSessionIDs.includes(session.id)
+          const attached = attachedSessionIDs.includes(session.id)
           const status = agentStatus[session.id]?.state
           const permissionCount = pendingPermissions[session.id]?.length ?? 0
           const questionCount = pendingQuestions[session.id]?.length ?? 0
@@ -87,8 +102,8 @@ function SessionList({ onSelect }: { onSelect?: () => void }) {
                 size="icon"
                 variant="ghost"
                 className="h-7 w-7 shrink-0 opacity-0 group-hover:opacity-100"
-                onClick={() => remove(session.id)}
-                title="删除会话"
+                onClick={() => remove(session.id, { deleteRemote: owned || !attached })}
+                title={owned || !attached ? "删除会话" : "从 WebUI 移除"}
               >
                 <Trash2 className="h-3 w-3" />
               </Button>
@@ -96,6 +111,8 @@ function SessionList({ onSelect }: { onSelect?: () => void }) {
           )
         })}
       </div>
+      <WorkspaceSessionDialog open={workspaceDialogOpen} onOpenChange={setWorkspaceDialogOpen} defaultWorkspace={defaultWorkspace} />
+      <AttachSessionDialog open={attachDialogOpen} onOpenChange={setAttachDialogOpen} />
     </>
   )
 }

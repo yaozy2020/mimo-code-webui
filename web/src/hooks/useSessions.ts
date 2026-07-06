@@ -4,27 +4,31 @@ import { useAppDispatch, useAppState } from "@/stores/appStore"
 
 export function useSessions() {
   const dispatch = useAppDispatch()
-  const { sessions, activeSessionID } = useAppState()
+  const { sessions, activeSessionID, ownedSessionIDs, attachedSessionIDs } = useAppState()
+  const visibleSessionIDs = new Set([...ownedSessionIDs, ...attachedSessionIDs])
+  const visibleSessions = sessions.filter((session) => visibleSessionIDs.has(session.id))
 
   const load = useCallback(async () => {
     try {
       const data = await listSessions()
       dispatch({ type: "SET_SESSIONS", sessions: data })
-      const todoResults = await Promise.allSettled(data.map((session) => getTodos(session.id)))
+      const visible = data.filter((session) => visibleSessionIDs.has(session.id))
+      const todoResults = await Promise.allSettled(visible.map((session) => getTodos(session.id, session.directory)))
       todoResults.forEach((result, index) => {
         if (result.status === "fulfilled") {
-          dispatch({ type: "SET_TODOS", sessionID: data[index].id, todos: result.value })
+          dispatch({ type: "SET_TODOS", sessionID: visible[index].id, todos: result.value })
         }
       })
     } catch (error) {
       console.error("[useSessions] failed to load sessions:", error)
     }
-  }, [dispatch])
+  }, [attachedSessionIDs, dispatch, ownedSessionIDs])
 
   const create = useCallback(
     async (directory?: string) => {
-      const session = await createSession(directory)
+      const session = await createSession({ directory })
       dispatch({ type: "ADD_SESSION", session })
+      dispatch({ type: "SET_CURRENT_WORKSPACE", workspace: session.directory ?? directory ?? null })
       dispatch({ type: "SET_ACTIVE_SESSION", sessionID: session.id })
       return session
     },
@@ -32,29 +36,37 @@ export function useSessions() {
   )
 
   const remove = useCallback(
-    async (sessionID: string) => {
-      await deleteSession(sessionID)
-      dispatch({ type: "DELETE_SESSION", sessionID })
+    async (sessionID: string, options: { deleteRemote?: boolean } = {}) => {
+      const directory = sessions.find((session) => session.id === sessionID)?.directory
+      if (options.deleteRemote !== false) {
+        await deleteSession(sessionID, directory)
+        dispatch({ type: "DELETE_SESSION", sessionID })
+        return
+      }
+      dispatch({ type: "DETACH_SESSION", sessionID })
     },
-    [dispatch],
+    [dispatch, sessions],
   )
 
   const rename = useCallback(
     async (sessionID: string, title: string) => {
-      const session = await updateSession(sessionID, { title })
+      const directory = sessions.find((item) => item.id === sessionID)?.directory
+      const session = await updateSession(sessionID, { title }, directory)
       dispatch({ type: "UPDATE_SESSION", session })
     },
-    [dispatch],
+    [dispatch, sessions],
   )
 
   const fork = useCallback(
     async (sessionID: string, messageID: string) => {
-      const session = await forkSession(sessionID, messageID)
+      const directory = sessions.find((item) => item.id === sessionID)?.directory
+      const session = await forkSession(sessionID, messageID, directory)
       dispatch({ type: "ADD_SESSION", session })
+      dispatch({ type: "SET_CURRENT_WORKSPACE", workspace: session.directory ?? directory ?? null })
       dispatch({ type: "SET_ACTIVE_SESSION", sessionID: session.id })
       return session
     },
-    [dispatch],
+    [dispatch, sessions],
   )
 
   const setActive = useCallback(
@@ -69,7 +81,8 @@ export function useSessions() {
   }, [load])
 
   return {
-    sessions,
+    sessions: visibleSessions,
+    allSessions: sessions,
     activeSessionID,
     load,
     create,
