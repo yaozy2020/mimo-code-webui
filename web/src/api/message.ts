@@ -8,6 +8,20 @@ export interface PromptPart {
   mime?: string
   url?: string
   filename?: string
+  size?: number
+}
+
+function partToPayload(part: PromptPart) {
+  if (part.type === "text") return { type: "text", text: part.content ?? "" }
+  if (part.type === "file") {
+    return {
+      type: "file",
+      mime: part.mime ?? "application/octet-stream",
+      filename: part.filename,
+      url: part.url ?? "",
+    }
+  }
+  return part
 }
 
 export function modelSelectionToPayload(model?: string) {
@@ -31,9 +45,7 @@ export async function sendPrompt(
       sessionID,
       agent: input.agent ?? "build",
       model: modelSelectionToPayload(input.model),
-      parts: input.parts.map((part) =>
-        part.type === "text" ? { type: "text", text: part.content ?? "" } : part,
-      ),
+      parts: input.parts.map(partToPayload),
       variant: input.variant,
     }),
   })

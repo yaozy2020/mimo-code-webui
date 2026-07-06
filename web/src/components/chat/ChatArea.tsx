@@ -9,7 +9,7 @@ import { useNewChat } from "@/hooks/useNewChat"
 import { createClientID } from "@/lib/utils"
 import { useAppDispatch, useAppState } from "@/stores/appStore"
 import type { Message } from "@/types"
-import { InputBar, type PromptMode } from "./InputBar"
+import { InputBar, type PendingAttachment, type PromptMode } from "./InputBar"
 import { MessageList } from "./MessageList"
 import { PermissionDialog } from "./PermissionDialog"
 import { PromptToolbar } from "./PromptToolbar"
@@ -155,17 +155,37 @@ export function ChatArea() {
   }, [activeSessionID, dispatch])
 
   const handleSend = useCallback(
-    async (text: string, mode: PromptMode) => {
+    async (text: string, mode: PromptMode, attachments: PendingAttachment[] = []) => {
       if (!activeSessionID) return
 
       const promptText =
         mode === "plan" ? `请先规划。先检查上下文并提出最安全的实现方案，不要直接修改代码。\n\n${text}` : text
+      const attachmentText = attachments
+        .filter((attachment) => typeof attachment.content === "string")
+        .map((attachment) => `附件 ${attachment.filename}:\n${attachment.content}`)
+        .join("\n\n")
+      const promptParts = [
+        ...(promptText ? [{ type: "text" as const, content: promptText }] : []),
+        ...(attachmentText ? [{ type: "text" as const, content: attachmentText }] : []),
+        ...attachments,
+      ]
 
       const userMessage: Message = {
         id: createClientID("msg"),
         sessionID: activeSessionID,
         role: "user",
-        content: text,
+        content: text || attachments.map((attachment) => `附件：${attachment.filename}`).join("\n"),
+        parts: [
+          ...(text ? [{ id: createClientID("part"), type: "text" as const, content: text }] : []),
+          ...attachments.map((attachment) => ({
+            id: attachment.id ?? createClientID("part"),
+            type: "file" as const,
+            mime: attachment.mime,
+            filename: attachment.filename,
+            url: attachment.url,
+            content: attachment.content,
+          })),
+        ],
         time: { created: Date.now() },
       }
       const knownAssistantIDs = new Set(
@@ -184,11 +204,10 @@ export function ChatArea() {
               (runtimeModel) => runtimeModel.provider === selectedModel.providerID && runtimeModel.id === selectedModel.modelID,
             )
             if (isRuntimeModel) {
-              const parts: { type: "text"; content: string }[] = [{ type: "text", content: promptText }]
               await sendPrompt(activeSessionID, {
                 agent: mode === "web-search" ? "explore" : "build",
                 model: settings.model,
-                parts,
+                parts: promptParts,
                 variant: mode === "multimodal" ? "multimodal" : undefined,
               })
               void waitForAssistantMessages(activeSessionID, knownAssistantIDs)
@@ -199,6 +218,10 @@ export function ChatArea() {
                 })
                 .catch((error) => console.error("[ChatArea] failed to sync assistant messages:", error))
               return
+            }
+
+            if (attachments.length > 0) {
+              throw new Error("附件上传仅支持当前运行中的原生模型链路，请选择已加载的 runtime 模型或默认模型。")
             }
 
             const result = await runLocalPrompt({ model, prompt: promptText })
@@ -213,11 +236,10 @@ export function ChatArea() {
             return
           }
         }
-        const parts: { type: "text"; content: string }[] = [{ type: "text", content: promptText }]
         await sendPrompt(activeSessionID, {
           agent: mode === "web-search" ? "explore" : "build",
           model: settings.model,
-          parts,
+          parts: promptParts,
           variant: mode === "multimodal" ? "multimodal" : undefined,
         })
         void waitForAssistantMessages(activeSessionID, knownAssistantIDs)

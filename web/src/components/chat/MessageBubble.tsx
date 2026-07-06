@@ -17,6 +17,7 @@ function preview(value: unknown) {
 export function MessageBubble({ message, onCopy }: MessageBubbleProps) {
   const isUser = message.role === "user"
   const toolParts = message.parts?.filter((part) => part.type === "tool") ?? []
+  const fileParts = message.parts?.filter((part) => part.type === "file") ?? []
 
   return (
     <div className={cn("group flex gap-3 py-4", isUser ? "flex-row-reverse" : "flex-row")}>
@@ -46,6 +47,24 @@ export function MessageBubble({ message, onCopy }: MessageBubbleProps) {
             </Button>
           )}
           <div className="whitespace-pre-wrap text-sm leading-relaxed">{message.content || (isUser ? "" : "...")}</div>
+          {fileParts.length > 0 && (
+            <div className="mt-3 grid gap-2">
+              {fileParts.map((part) => (
+                <div key={part.id} className="rounded-md border bg-background/70 p-2 text-xs">
+                  <div className="font-medium">{part.filename ?? "附件"}</div>
+                  <div className="text-muted-foreground">{part.mime ?? "unknown"}</div>
+                  {part.mime?.startsWith("image/") && part.url && (
+                    <img src={part.url} alt={part.filename ?? "附件图片"} className="mt-2 max-h-48 rounded border object-contain" />
+                  )}
+                  {part.content && !part.mime?.startsWith("image/") && (
+                    <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-muted p-2">
+                      {preview(part.content)}
+                    </pre>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
           {toolParts.length > 0 && (
             <div className="mt-3 space-y-2">
               {toolParts.map((part) => (
