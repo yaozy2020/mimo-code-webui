@@ -27,10 +27,11 @@ export function useSessions() {
   const create = useCallback(
     async (directory?: string) => {
       const session = await createSession({ directory })
-      dispatch({ type: "ADD_SESSION", session })
-      dispatch({ type: "SET_CURRENT_WORKSPACE", workspace: session.directory ?? directory ?? null })
-      dispatch({ type: "SET_ACTIVE_SESSION", sessionID: session.id })
-      return session
+      const routedSession = directory && !session.directory ? { ...session, directory } : session
+      dispatch({ type: "ADD_SESSION", session: routedSession })
+      dispatch({ type: "SET_CURRENT_WORKSPACE", workspace: routedSession.directory ?? directory ?? null })
+      dispatch({ type: "SET_ACTIVE_SESSION", sessionID: routedSession.id })
+      return routedSession
     },
     [dispatch],
   )

@@ -13,7 +13,7 @@ import { useAppDispatch, useAppState } from "@/stores/appStore"
 
 export function PermissionDialog() {
   const dispatch = useAppDispatch()
-  const { pendingPermission } = useAppState()
+  const { pendingPermission, sessions } = useAppState()
   const [feedback, setFeedback] = useState("")
   const [mode, setMode] = useState<"normal" | "feedback">("normal")
   const [submitting, setSubmitting] = useState(false)
@@ -61,6 +61,7 @@ export function PermissionDialog() {
 
   if (!pendingPermission) return null
 
+  const directory = sessions.find((session) => session.id === pendingPermission.sessionID)?.directory
   const permissionName = pendingPermission.toolName ?? pendingPermission.permission ?? "权限请求"
   const permissionDetails =
     pendingPermission.input ?? {
@@ -77,6 +78,7 @@ export function PermissionDialog() {
     try {
       await respondPermission(pendingPermission.id, response, {
         sessionID: pendingPermission.sessionID,
+        directory,
         message,
       })
       dispatch({ type: "CLEAR_PENDING_PERMISSION", permissionID: pendingPermission.id })

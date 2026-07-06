@@ -244,8 +244,8 @@ export function ChatArea() {
 
   const handleAbort = useCallback(async () => {
     if (!activeSessionID) return
-    await abortSession(activeSessionID)
-  }, [activeSessionID])
+    await abortSession(activeSessionID, activeDirectory)
+  }, [activeDirectory, activeSessionID])
 
   const sessionMessages = activeSessionID ? messages[activeSessionID] || [] : []
 

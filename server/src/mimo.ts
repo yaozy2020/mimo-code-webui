@@ -1,4 +1,5 @@
 import fs from "node:fs"
+import net from "node:net"
 import os from "node:os"
 import path from "node:path"
 import { promisify } from "node:util"
@@ -15,6 +16,56 @@ export interface MimoServerInfo {
 
 let activeProcess: ChildProcess | null = null
 let activePort: number | null = null
+
+interface ManagedMimoInstance extends MimoServerInfo {
+  directory: string
+  process: ChildProcess
+}
+
+const managedInstances = new Map<string, ManagedMimoInstance>()
+const pendingInstances = new Map<string, Promise<MimoServerInfo>>()
+const reservedManagedPorts = new Set<number>()
+let nextManagedPort = 0
+
+function normalizeDirectory(directory: string) {
+  return path.resolve(directory)
+}
+
+function assertUsableDirectory(directory: string) {
+  try {
+    if (fs.statSync(directory).isDirectory()) return
+  } catch {
+    // Fall through to a user-facing error below.
+  }
+  throw new Error(`Workspace directory does not exist: ${directory}`)
+}
+
+function isPortAvailable(port: number, host: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const tester = net
+      .createServer()
+      .once("error", () => resolve(false))
+      .once("listening", () => {
+        tester.close(() => resolve(true))
+      })
+      .listen(port, host)
+  })
+}
+
+async function findAvailableMimoPort(hostname: string, preferred: number) {
+  for (let port = preferred; port < preferred + 200; port += 1) {
+    if (!reservedManagedPorts.has(port) && (await isPortAvailable(port, hostname))) return port
+  }
+  throw new Error(`Could not find an available MiMo serve port from ${preferred}`)
+}
+
+async function reserveManagedMimoPort(hostname: string, preferred: number) {
+  const first = Math.max(preferred + 1, nextManagedPort || preferred + 1)
+  const port = await findAvailableMimoPort(hostname, first)
+  reservedManagedPorts.add(port)
+  nextManagedPort = port + 1
+  return port
+}
 
 function getMimoCommand(): string | null {
   const platform = os.platform()
@@ -261,6 +312,108 @@ export async function startMimoServer(hostname = "127.0.0.1", port = 4096, works
   })
 }
 
+export async function ensureMimoServerForDirectory(hostname: string, preferredPort: number, directory: string): Promise<MimoServerInfo> {
+  const normalized = normalizeDirectory(directory)
+  assertUsableDirectory(normalized)
+
+  const existing = managedInstances.get(normalized)
+  if (existing && !existing.process.killed) {
+    return { url: existing.url, port: existing.port, pid: existing.pid }
+  }
+
+  const pending = pendingInstances.get(normalized)
+  if (pending) return pending
+
+  const next = (async () => {
+    const port = await reserveManagedMimoPort(hostname, preferredPort)
+    try {
+      return await startDetachedMimoServer(hostname, port, normalized)
+    } catch (error) {
+      reservedManagedPorts.delete(port)
+      throw error
+    }
+  })()
+  pendingInstances.set(normalized, next)
+
+  try {
+    return await next
+  } finally {
+    pendingInstances.delete(normalized)
+  }
+}
+
+async function startDetachedMimoServer(hostname: string, port: number, directory: string): Promise<MimoServerInfo> {
+  const mimo = detectMimo()
+  if (!mimo) throw new Error("MiMo-Code CLI (mimo) not found")
+
+  return new Promise((resolve, reject) => {
+    const proc = spawn(mimo.command, ["serve", `--hostname=${hostname}`, `--port=${port}`], {
+      cwd: directory,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: process.env,
+    })
+
+    let stdout = ""
+    let stderr = ""
+    let resolved = false
+    const timeout = setTimeout(() => {
+      if (!resolved) {
+        proc.kill()
+        reject(new Error(`Timeout waiting for mimo serve to start for ${directory}`))
+      }
+    }, 30000)
+
+    let buffer = ""
+    proc.stdout?.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString()
+      buffer += chunk.toString()
+      const lines = buffer.split("\n")
+      buffer = lines.pop() ?? ""
+      for (const raw of lines) {
+        const line = raw.trim()
+        if (!line) continue
+        console.log(`[mimo:${port}] ${line}`)
+        if (line.includes("server listening")) {
+          const match = line.match(/on\s+(https?:\/\/[^\s]+)/)
+          if (match) {
+            clearTimeout(timeout)
+            resolved = true
+            const info = { url: match[1], port, pid: proc.pid ?? 0 }
+            managedInstances.set(directory, { ...info, directory, process: proc })
+            resolve(info)
+          }
+        }
+      }
+    })
+
+    proc.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString()
+      console.error(`[mimo:${port} stderr] ${chunk.toString().trim()}`)
+    })
+
+    proc.on("error", (error) => {
+      clearTimeout(timeout)
+      if (!resolved) reject(error)
+    })
+
+    proc.on("exit", (code) => {
+      managedInstances.delete(directory)
+      reservedManagedPorts.delete(port)
+      clearTimeout(timeout)
+      if (!resolved) reject(new Error(`mimo serve exited with code ${code}.\nstdout: ${stdout}\nstderr: ${stderr}`))
+    })
+  })
+}
+
+export function listManagedMimoServers(): Array<Omit<ManagedMimoInstance, "process">> {
+  return Array.from(managedInstances.values()).map((instance) => ({
+    directory: instance.directory,
+    pid: instance.pid,
+    port: instance.port,
+    url: instance.url,
+  }))
+}
+
 export async function stopMimoServer(): Promise<void> {
   if (!activeProcess) return
 
@@ -275,6 +428,15 @@ export async function stopMimoServer(): Promise<void> {
   }
   activeProcess = null
   activePort = null
+}
+
+export async function stopManagedMimoServers(): Promise<void> {
+  for (const instance of managedInstances.values()) {
+    instance.process.kill("SIGTERM")
+  }
+  managedInstances.clear()
+  pendingInstances.clear()
+  reservedManagedPorts.clear()
 }
 
 export async function checkHealth(url: string): Promise<{ healthy: boolean; version?: string }> {

@@ -1,10 +1,12 @@
 import { AuthRequiredError, createEventStream } from "@/api/client"
 import type { Message, PermissionRequest, QuestionRequest, SnapshotFileDiff, StreamEvent } from "@/types"
-import { useAppDispatch } from "@/stores/appStore"
+import { useAppDispatch, useAppState } from "@/stores/appStore"
 import { useEffect, useRef } from "react"
 
 export function useStreamingMessage() {
   const dispatch = useAppDispatch()
+  const { activeSessionID, sessions } = useAppState()
+  const activeDirectory = activeSessionID ? sessions.find((session) => session.id === activeSessionID)?.directory : undefined
   const abortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
@@ -23,12 +25,13 @@ export function useStreamingMessage() {
         }
         console.error("[streaming] error:", error)
       },
+      activeDirectory,
     )
 
     return () => {
       abort.abort()
     }
-  }, [dispatch])
+  }, [activeDirectory, dispatch])
 
   return {
     disconnect: () => abortRef.current?.abort(),

@@ -53,8 +53,8 @@ export async function sendPrompt(
   })
 }
 
-export async function abortSession(sessionID: string): Promise<void> {
-  await fetchJson(`/session/${sessionID}/abort`, { method: "POST" })
+export async function abortSession(sessionID: string, directory?: string): Promise<void> {
+  await fetchJson(withDirectory(`/session/${sessionID}/abort`, directory), { method: "POST" })
 }
 
 export async function respondPermission(
@@ -62,7 +62,7 @@ export async function respondPermission(
   response: "once" | "always" | "reject",
   options?: { message?: string; sessionID?: string; directory?: string },
 ): Promise<void> {
-  await fetchJson(`/permission/${permissionID}/reply`, {
+  await fetchJson(withDirectory(`/permission/${permissionID}/reply`, options?.directory), {
     method: "POST",
     body: JSON.stringify({
       reply: response,
@@ -82,8 +82,9 @@ export async function listQuestions(): Promise<QuestionRequest[]> {
 export async function respondQuestion(
   requestID: string,
   answers: string[][],
+  directory?: string,
 ): Promise<void> {
-  await fetchJson(`/question/${requestID}/reply`, {
+  await fetchJson(withDirectory(`/question/${requestID}/reply`, directory), {
     method: "POST",
     body: JSON.stringify({
       answers,
@@ -91,8 +92,8 @@ export async function respondQuestion(
   })
 }
 
-export async function rejectQuestion(requestID: string): Promise<void> {
-  await fetchJson(`/question/${requestID}/reject`, { method: "POST" })
+export async function rejectQuestion(requestID: string, directory?: string): Promise<void> {
+  await fetchJson(withDirectory(`/question/${requestID}/reject`, directory), { method: "POST" })
 }
 
 export function partsToText(parts: MessagePart[]): string {

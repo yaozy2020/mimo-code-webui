@@ -87,7 +87,7 @@ export function AttachSessionDialog({ open, onOpenChange }: AttachSessionDialogP
       <div className="grid gap-4">
         <DialogHeader>
           <DialogTitle>接入已有会话</DialogTitle>
-          <DialogDescription>只有明确接入的 MiMo 会话才会出现在 WebUI 侧边栏；跨工作区会话需要当前 mimo serve 有权限访问原目录。</DialogDescription>
+          <DialogDescription>只有明确接入的 MiMo 会话才会出现在 WebUI 侧边栏；跨工作区会话会按原目录路由到对应项目实例。</DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
           <div className="grid gap-2">
@@ -106,7 +106,7 @@ export function AttachSessionDialog({ open, onOpenChange }: AttachSessionDialogP
               id="attach-workspace"
               value={workspace}
               onChange={(event) => setWorkspace(event.target.value)}
-              placeholder="跨工作区会话建议填写原工作区路径"
+              placeholder="跨工作区会话可填写原工作区路径"
             />
           </div>
         </div>

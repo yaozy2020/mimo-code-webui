@@ -12,19 +12,6 @@ interface WorkspaceSessionDialogProps {
   defaultWorkspace?: string | null
 }
 
-function normalizeDirectory(value?: string | null) {
-  const trimmed = value?.trim()
-  if (!trimmed) return null
-  return trimmed.replace(/\\/g, "/").replace(/\/+$/, "") || "/"
-}
-
-function isWithinDirectory(directory: string, root: string) {
-  const normalizedDirectory = normalizeDirectory(directory)
-  const normalizedRoot = normalizeDirectory(root)
-  if (!normalizedDirectory || !normalizedRoot) return true
-  return normalizedDirectory === normalizedRoot || normalizedDirectory.startsWith(`${normalizedRoot}/`)
-}
-
 export function WorkspaceSessionDialog({ open, onOpenChange, defaultWorkspace }: WorkspaceSessionDialogProps) {
   const newChat = useNewChat()
   const { status } = useAppState()
@@ -49,10 +36,6 @@ export function WorkspaceSessionDialog({ open, onOpenChange, defaultWorkspace }:
       setError("请输入工作区路径")
       return
     }
-    if (serveDirectory && !isWithinDirectory(directory, serveDirectory)) {
-      setError(`当前 mimo serve 只允许选择 ${serveDirectory} 以内的目录。请改选该目录下的项目，或用更高层目录重启 WebUI/mimo serve。`)
-      return
-    }
     setSubmitting(true)
     setError(null)
     try {
@@ -62,7 +45,7 @@ export function WorkspaceSessionDialog({ open, onOpenChange, defaultWorkspace }:
       const message = submitError instanceof Error ? submitError.message : String(submitError)
       setError(
         message.includes("directory must be within the server's working directory")
-          ? `当前 mimo serve 只允许选择 ${serveDirectory ?? "其启动目录"} 以内的目录。请改选该目录下的项目，或用更高层目录重启 WebUI/mimo serve。`
+          ? "该目录被 MiMo 拒绝访问。请确认路径存在，或重启 WebUI 后再试。"
           : message,
       )
     } finally {
@@ -75,7 +58,7 @@ export function WorkspaceSessionDialog({ open, onOpenChange, defaultWorkspace }:
       <form onSubmit={handleSubmit} className="grid gap-4">
         <DialogHeader>
           <DialogTitle>新建工作区会话</DialogTitle>
-          <DialogDescription>选择代码所在目录后再创建会话，后续工具调用会在这个工作区执行。</DialogDescription>
+          <DialogDescription>选择代码所在目录后再创建会话，WebUI 会为该目录启动或复用独立的 mimo serve。</DialogDescription>
         </DialogHeader>
         <div className="grid gap-2">
           <Label htmlFor="workspace-path">工作区路径</Label>
@@ -87,7 +70,7 @@ export function WorkspaceSessionDialog({ open, onOpenChange, defaultWorkspace }:
             autoFocus
           />
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <span className="truncate">当前可选范围：{serveDirectory ?? "未知"}</span>
+            <span className="truncate">默认实例目录：{serveDirectory ?? "未知"}；其他目录会走独立项目实例</span>
             {serveDirectory && (
               <Button type="button" size="sm" variant="ghost" className="h-6 px-2" onClick={() => setWorkspace(serveDirectory)}>
                 使用当前目录

@@ -47,12 +47,14 @@ export function createEventStream(
   signal: AbortSignal,
   onEvent: (event: StreamEvent) => void,
   onError?: (error: Error) => void,
+  directory?: string,
 ) {
   let cancelled = false
 
   const run = async () => {
     try {
-      const response = await fetch(`${API_BASE}/global/event`, {
+      const eventPath = directory ? `/global/event?directory=${encodeURIComponent(directory)}` : "/global/event"
+      const response = await fetch(`${API_BASE}${eventPath}`, {
         signal,
         headers: getAuthHeaders(),
       })

@@ -5,8 +5,8 @@ import net from "node:net"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { addMimoModelConfig, getProjectRoot, listManualModels, readMimoConfig } from "./config.js"
-import { checkHealth, detectMimo, listBuiltinModels, probeNativeModel, runMimoPrompt, startMimoServer, stopMimoServer } from "./mimo.js"
-import { createMimoProxy } from "./proxy.js"
+import { checkHealth, detectMimo, ensureMimoServerForDirectory, listBuiltinModels, listManagedMimoServers, probeNativeModel, runMimoPrompt, startMimoServer, stopManagedMimoServers, stopMimoServer } from "./mimo.js"
+import { createRoutedMimoProxy } from "./proxy.js"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -73,6 +73,11 @@ async function getMimoPathInfo(baseUrl: string): Promise<Record<string, unknown>
   }
 }
 
+function requestDirectory(req: Request): string | undefined {
+  const value = req.query.directory
+  return typeof value === "string" && value.trim() ? value.trim() : undefined
+}
+
 async function main() {
   const app = express()
   app.use(cors())
@@ -103,7 +108,12 @@ async function main() {
     }
   }
 
-  const proxy = createMimoProxy(mimoInfo.url)
+  const proxy = createRoutedMimoProxy(async (req) => {
+    const directory = requestDirectory(req)
+    if (!directory) return mimoInfo.url
+    const instance = await ensureMimoServerForDirectory(MIMO_HOST, MIMO_PORT, directory)
+    return instance.url
+  })
 
   // Public status endpoint (no auth) so frontend can detect if auth is required
   app.get("/status", async (req, res) => {
@@ -118,6 +128,7 @@ async function main() {
         version: health.version,
         managed: mimoStartedByUs,
         workspaceRoot: MIMO_WORKSPACE_ROOT,
+        projectServers: listManagedMimoServers(),
         path: pathInfo,
       },
       config: readMimoConfig(),
@@ -202,6 +213,7 @@ async function main() {
     if (mimoStartedByUs) {
       await stopMimoServer()
     }
+    await stopManagedMimoServers()
     process.exit(0)
   }
 

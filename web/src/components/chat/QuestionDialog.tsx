@@ -13,7 +13,7 @@ import { useAppDispatch, useAppState } from "@/stores/appStore"
 
 export function QuestionDialog() {
   const dispatch = useAppDispatch()
-  const { pendingQuestion } = useAppState()
+  const { pendingQuestion, sessions } = useAppState()
   const [selected, setSelected] = useState<string[][]>([])
   const [customAnswers, setCustomAnswers] = useState<string[]>([])
   const [submitting, setSubmitting] = useState(false)
@@ -28,6 +28,7 @@ export function QuestionDialog() {
 
   if (!pendingQuestion) return null
 
+  const directory = sessions.find((session) => session.id === pendingQuestion.sessionID)?.directory
   const questions = pendingQuestion.questions ?? []
 
   const setQuestionAnswers = (index: number, answers: string[]) => {
@@ -71,7 +72,7 @@ export function QuestionDialog() {
     setSubmitting(true)
     setError(null)
     try {
-      await respondQuestion(pendingQuestion.id, buildAnswers())
+      await respondQuestion(pendingQuestion.id, buildAnswers(), directory)
       dispatch({ type: "CLEAR_PENDING_QUESTION", requestID: pendingQuestion.id })
       dispatch({
         type: "SET_AGENT_STATUS",
@@ -90,7 +91,7 @@ export function QuestionDialog() {
     setSubmitting(true)
     setError(null)
     try {
-      await rejectQuestion(pendingQuestion.id)
+      await rejectQuestion(pendingQuestion.id, directory)
       dispatch({ type: "CLEAR_PENDING_QUESTION", requestID: pendingQuestion.id })
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error))
