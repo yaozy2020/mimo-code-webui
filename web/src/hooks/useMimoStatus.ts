@@ -19,6 +19,21 @@ export function useMimoStatus(pollInterval = 5000) {
         if (!cancelled) {
           setStatus({ loading: false, error: null, data })
           const authRequired = !!data.authRequired
+          const mimo = data.mimo as { healthy?: boolean; url?: string; version?: string; managed?: boolean; workspaceRoot?: string; path?: { directory?: string; worktree?: string } } | undefined
+          if (mimo) {
+            dispatch({
+              type: "SET_STATUS",
+              status: {
+                mimoHealthy: !!mimo.healthy,
+                mimoUrl: mimo.url ?? "http://127.0.0.1:4096",
+                mimoVersion: mimo.version,
+                mimoManaged: !!mimo.managed,
+                workspaceRoot: mimo.workspaceRoot,
+                directory: mimo.path?.directory,
+                worktree: mimo.path?.worktree,
+              },
+            })
+          }
           dispatch({ type: "SET_AUTH_REQUIRED", required: authRequired })
           if (!authRequired && localStorage.getItem("mimo-webui-auth-token")) {
             dispatch({ type: "UPDATE_SETTINGS", settings: { authToken: "" } })

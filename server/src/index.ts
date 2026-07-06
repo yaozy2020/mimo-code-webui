@@ -4,7 +4,7 @@ import fs from "node:fs"
 import net from "node:net"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { addMimoModelConfig, listManualModels, readMimoConfig } from "./config.js"
+import { addMimoModelConfig, getProjectRoot, listManualModels, readMimoConfig } from "./config.js"
 import { checkHealth, detectMimo, listBuiltinModels, probeNativeModel, runMimoPrompt, startMimoServer, stopMimoServer } from "./mimo.js"
 import { createMimoProxy } from "./proxy.js"
 
@@ -17,6 +17,7 @@ const HOST = process.env.HOST || "0.0.0.0"
 const MIMO_PORT = Number(process.env.MIMO_PORT) || 4096
 const MIMO_HOST = process.env.MIMO_HOST || "127.0.0.1"
 const AUTH_TOKEN = process.env.AUTH_TOKEN
+const MIMO_WORKSPACE_ROOT = path.resolve(process.env.MIMO_WORKSPACE_ROOT || getProjectRoot())
 
 function isPortAvailable(port: number, host: string): Promise<boolean> {
   return new Promise((resolve) => {
@@ -62,6 +63,16 @@ function authMiddleware(req: Request, res: Response, next: NextFunction) {
   next()
 }
 
+async function getMimoPathInfo(baseUrl: string): Promise<Record<string, unknown> | null> {
+  try {
+    const response = await fetch(`${baseUrl}/path`)
+    if (!response.ok) return null
+    return (await response.json()) as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
 async function main() {
   const app = express()
   app.use(cors())
@@ -85,8 +96,8 @@ async function main() {
     if (!mimo) {
       console.warn("[server] mimo CLI not found. WebUI will start but API calls will fail until mimo serve is available.")
     } else {
-      console.log(`[server] starting mimo serve on ${MIMO_HOST}:${MIMO_PORT}...`)
-      mimoInfo = await startMimoServer(MIMO_HOST, MIMO_PORT)
+      console.log(`[server] starting mimo serve on ${MIMO_HOST}:${MIMO_PORT} with workspace root ${MIMO_WORKSPACE_ROOT}...`)
+      mimoInfo = await startMimoServer(MIMO_HOST, MIMO_PORT, MIMO_WORKSPACE_ROOT)
       mimoStartedByUs = true
       console.log(`[server] mimo serve ready at ${mimoInfo.url} (pid ${mimoInfo.pid})`)
     }
@@ -97,6 +108,7 @@ async function main() {
   // Public status endpoint (no auth) so frontend can detect if auth is required
   app.get("/status", async (req, res) => {
     const health = await checkHealth(mimoInfo.url)
+    const pathInfo = health.healthy ? await getMimoPathInfo(mimoInfo.url) : null
     const hostHeader = req.headers.host || `${HOST}:${port}`
     res.json({
       webui: { port, host: HOST, url: `http://${hostHeader}` },
@@ -105,6 +117,8 @@ async function main() {
         healthy: health.healthy,
         version: health.version,
         managed: mimoStartedByUs,
+        workspaceRoot: MIMO_WORKSPACE_ROOT,
+        path: pathInfo,
       },
       config: readMimoConfig(),
       authRequired: !!AUTH_TOKEN,

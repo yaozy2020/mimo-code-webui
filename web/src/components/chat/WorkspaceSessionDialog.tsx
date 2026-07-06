@@ -4,6 +4,7 @@ import { Dialog, DialogDescription, DialogFooter, DialogHeader, DialogTitle } fr
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useNewChat } from "@/hooks/useNewChat"
+import { useAppState } from "@/stores/appStore"
 
 interface WorkspaceSessionDialogProps {
   open: boolean
@@ -11,8 +12,23 @@ interface WorkspaceSessionDialogProps {
   defaultWorkspace?: string | null
 }
 
+function normalizeDirectory(value?: string | null) {
+  const trimmed = value?.trim()
+  if (!trimmed) return null
+  return trimmed.replace(/\\/g, "/").replace(/\/+$/, "") || "/"
+}
+
+function isWithinDirectory(directory: string, root: string) {
+  const normalizedDirectory = normalizeDirectory(directory)
+  const normalizedRoot = normalizeDirectory(root)
+  if (!normalizedDirectory || !normalizedRoot) return true
+  return normalizedDirectory === normalizedRoot || normalizedDirectory.startsWith(`${normalizedRoot}/`)
+}
+
 export function WorkspaceSessionDialog({ open, onOpenChange, defaultWorkspace }: WorkspaceSessionDialogProps) {
   const newChat = useNewChat()
+  const { status } = useAppState()
+  const serveDirectory = status.directory ?? status.workspaceRoot
   const [workspace, setWorkspace] = useState(defaultWorkspace ?? "")
   const [title, setTitle] = useState("")
   const [error, setError] = useState<string | null>(null)
@@ -33,13 +49,22 @@ export function WorkspaceSessionDialog({ open, onOpenChange, defaultWorkspace }:
       setError("请输入工作区路径")
       return
     }
+    if (serveDirectory && !isWithinDirectory(directory, serveDirectory)) {
+      setError(`当前 mimo serve 只允许选择 ${serveDirectory} 以内的目录。请改选该目录下的项目，或用更高层目录重启 WebUI/mimo serve。`)
+      return
+    }
     setSubmitting(true)
     setError(null)
     try {
       await newChat({ directory, title: title.trim() || undefined })
       onOpenChange(false)
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : String(submitError))
+      const message = submitError instanceof Error ? submitError.message : String(submitError)
+      setError(
+        message.includes("directory must be within the server's working directory")
+          ? `当前 mimo serve 只允许选择 ${serveDirectory ?? "其启动目录"} 以内的目录。请改选该目录下的项目，或用更高层目录重启 WebUI/mimo serve。`
+          : message,
+      )
     } finally {
       setSubmitting(false)
     }
@@ -61,6 +86,14 @@ export function WorkspaceSessionDialog({ open, onOpenChange, defaultWorkspace }:
             placeholder="/vol2/1000/下载/mimo/mimo-code-webui"
             autoFocus
           />
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span className="truncate">当前可选范围：{serveDirectory ?? "未知"}</span>
+            {serveDirectory && (
+              <Button type="button" size="sm" variant="ghost" className="h-6 px-2" onClick={() => setWorkspace(serveDirectory)}>
+                使用当前目录
+              </Button>
+            )}
+          </div>
         </div>
         <div className="grid gap-2">
           <Label htmlFor="session-title">会话标题（可选）</Label>

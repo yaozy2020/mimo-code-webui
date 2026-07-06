@@ -23,6 +23,9 @@ interface AppState {
     mimoUrl: string
     mimoVersion?: string
     mimoManaged: boolean
+    workspaceRoot?: string
+    directory?: string
+    worktree?: string
   }
   agentStatus: Record<string, AgentStatus>
   contextUsage: Record<string, ContextUsage>

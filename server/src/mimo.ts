@@ -184,7 +184,7 @@ export async function probeNativeModel(input: { baseUrl: string; model: string; 
   return { supported: false, reason: "no assistant text from native prompt_async" }
 }
 
-export async function startMimoServer(hostname = "127.0.0.1", port = 4096): Promise<MimoServerInfo> {
+export async function startMimoServer(hostname = "127.0.0.1", port = 4096, workspaceRoot = process.cwd()): Promise<MimoServerInfo> {
   if (activeProcess && !activeProcess.killed) {
     return { url: `http://${hostname}:${activePort ?? port}`, port: activePort ?? port, pid: activeProcess.pid ?? 0 }
   }
@@ -196,6 +196,7 @@ export async function startMimoServer(hostname = "127.0.0.1", port = 4096): Prom
 
   return new Promise((resolve, reject) => {
     const proc = spawn(mimo.command, ["serve", `--hostname=${hostname}`, `--port=${port}`], {
+      cwd: workspaceRoot,
       stdio: ["ignore", "pipe", "pipe"],
       env: process.env,
     })

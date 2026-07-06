@@ -21,7 +21,7 @@ if [ ! -d "web/dist" ] || [ ! -d "server/dist" ]; then
   npm run build
 fi
 
-# Environment variables (HOST, PORT, MIMO_HOST, MIMO_PORT, AUTH_TOKEN) are passed through automatically.
+# Environment variables (HOST, PORT, MIMO_HOST, MIMO_PORT, MIMO_WORKSPACE_ROOT, AUTH_TOKEN) are passed through automatically.
 if [ -n "${AUTH_TOKEN:-}" ]; then
   echo "[start] AUTH_TOKEN is set; authentication enabled"
 fi

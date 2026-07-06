@@ -51,9 +51,20 @@ export function AttachSessionDialog({ open, onOpenChange }: AttachSessionDialogP
     setLoading(true)
     setError(null)
     try {
-      attach(await getSession(id, workspace))
+      const knownSessions = discovered.length > 0 ? discovered : await discoverSessions()
+      const known = knownSessions.find((session) => session.id === id)
+      if (known) {
+        attach(known)
+        return
+      }
+      attach(await getSession(id, workspace.trim() || undefined))
     } catch (findError) {
-      setError(findError instanceof Error ? findError.message : String(findError))
+      const message = findError instanceof Error ? findError.message : String(findError)
+      setError(
+        message.includes("directory must be within the server's working directory")
+          ? "这个会话属于当前 mimo serve 不允许访问的工作区。请用更高层 MIMO_WORKSPACE_ROOT 重启 WebUI 托管的 mimo serve，或连接一个以该目录启动的 mimo serve。"
+          : message,
+      )
     } finally {
       setLoading(false)
     }
@@ -76,7 +87,7 @@ export function AttachSessionDialog({ open, onOpenChange }: AttachSessionDialogP
       <div className="grid gap-4">
         <DialogHeader>
           <DialogTitle>接入已有会话</DialogTitle>
-          <DialogDescription>只有明确接入的 MiMo 会话才会出现在 WebUI 侧边栏，避免误接当前 CLI 会话。</DialogDescription>
+          <DialogDescription>只有明确接入的 MiMo 会话才会出现在 WebUI 侧边栏；跨工作区会话需要当前 mimo serve 有权限访问原目录。</DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
           <div className="grid gap-2">
