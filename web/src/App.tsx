@@ -66,13 +66,13 @@ function AppContent() {
   }, [dispatch])
 
   return (
-    <div className={cn("flex h-screen flex-col", settings.theme)}>
+    <div className={cn("flex h-dvh min-h-0 flex-col bg-gradient-to-br from-background via-background to-muted/40", settings.theme)}>
       <Header
         onOpenSidebar={() => setShowSidebar(true)}
         onOpenSettings={() => setShowSettings(true)}
         onOpenDiagnostics={() => setShowDiagnostics(true)}
       />
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         <Sidebar open={showSidebar} onClose={() => setShowSidebar(false)} />
         <ChatArea />
       </div>

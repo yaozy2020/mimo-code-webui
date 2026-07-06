@@ -46,7 +46,7 @@ export function FileChangesPanel({ diffs, onClose }: FileChangesPanelProps) {
   }, [selectedFile])
 
   return (
-    <aside className="flex w-full flex-col border-l bg-background shadow-xl md:w-[420px]">
+    <aside className="fixed inset-x-2 bottom-2 top-16 z-30 flex flex-col overflow-hidden rounded-2xl border bg-background shadow-2xl lg:static lg:inset-auto lg:z-auto lg:w-[420px] lg:rounded-none lg:border-y-0 lg:border-r-0 lg:shadow-xl">
       <div className="flex items-center justify-between border-b px-4 py-3">
         <div>
           <h2 className="text-sm font-semibold">文件变更</h2>
@@ -58,7 +58,7 @@ export function FileChangesPanel({ diffs, onClose }: FileChangesPanelProps) {
       </div>
 
       <div className="grid min-h-0 flex-1 grid-rows-[auto_1fr] overflow-hidden">
-        <div className="max-h-44 overflow-auto border-b p-2">
+        <div className="max-h-36 overflow-auto border-b p-2 sm:max-h-44">
           {diffs.map((diff) => (
             <button
               key={diff.file}
@@ -68,7 +68,7 @@ export function FileChangesPanel({ diffs, onClose }: FileChangesPanelProps) {
               )}
               onClick={() => setSelectedFile(diff.file)}
             >
-              <div className="truncate font-medium">{diff.file}</div>
+              <div className="truncate font-medium" title={diff.file}>{diff.file}</div>
               <div className="mt-1 text-muted-foreground">
                 {diff.status ?? "modified"} +{diff.additions} -{diff.deletions}
               </div>
@@ -80,7 +80,7 @@ export function FileChangesPanel({ diffs, onClose }: FileChangesPanelProps) {
           {selectedDiff && (
             <section className="mb-4">
               <h3 className="mb-2 font-semibold">Patch</h3>
-              <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-md border bg-muted p-3">
+              <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted p-3 [overflow-wrap:anywhere] sm:max-h-64">
                 {selectedDiff.patch || "这个变更没有 patch 内容。"}
               </pre>
             </section>
@@ -94,7 +94,7 @@ export function FileChangesPanel({ diffs, onClose }: FileChangesPanelProps) {
               <div className="rounded-md border p-3 text-muted-foreground">二进制文件暂不预览。</div>
             )}
             {!loading && !error && content?.type === "text" && (
-              <pre className="max-h-[52vh] overflow-auto whitespace-pre-wrap rounded-md border bg-muted p-3">
+              <pre className="max-h-[42dvh] overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted p-3 [overflow-wrap:anywhere] lg:max-h-[52vh]">
                 {content.content}
               </pre>
             )}

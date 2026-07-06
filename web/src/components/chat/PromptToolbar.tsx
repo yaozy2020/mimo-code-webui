@@ -29,9 +29,9 @@ export function PromptToolbar({ sessionID, onOpenFileChanges }: PromptToolbarPro
     usage?.usedTokens !== undefined && usage.totalTokens ? Math.round((usage.usedTokens / usage.totalTokens) * 100) : undefined
 
   return (
-    <div className="border-b bg-background/95 px-4 py-2">
-      <div className="flex flex-wrap items-center gap-2">
-        <Badge variant={statusState === "busy" ? "default" : "secondary"} className="gap-1 capitalize">
+    <div className="border-b bg-background/80 px-2 py-2 backdrop-blur sm:px-4">
+      <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0">
+        <Badge variant={statusState === "busy" ? "default" : "secondary"} className="shrink-0 gap-1 capitalize">
             {statusState === "busy" && <Loader2 className="h-3 w-3 animate-spin" />}
             {(statusState === "waiting_for_permission" || statusState === "waiting_for_question") && (
               <Shield className="h-3 w-3" />
@@ -39,21 +39,21 @@ export function PromptToolbar({ sessionID, onOpenFileChanges }: PromptToolbarPro
           {statusLabels[statusState]}
         </Badge>
         {contextPercent !== undefined && (
-          <Badge variant="outline" className="gap-1">
+          <Badge variant="outline" className="shrink-0 gap-1">
             <ScrollText className="h-3 w-3" />
             上下文 {contextPercent}%
           </Badge>
         )}
         {(gitStatus.added > 0 || gitStatus.modified > 0 || gitStatus.deleted > 0) && (
-          <Badge variant="outline" className="gap-1">
+          <Badge variant="outline" className="shrink-0 gap-1">
             <GitBranch className="h-3 w-3" />
             +{gitStatus.added} ~{gitStatus.modified} -{gitStatus.deleted}
           </Badge>
         )}
-        {todoList.length > 0 && <Badge variant="outline">任务 {completedTodos}/{todoList.length}</Badge>}
+        {todoList.length > 0 && <Badge variant="outline" className="shrink-0">任务 {completedTodos}/{todoList.length}</Badge>}
         {diffList.length > 0 && (
           <button type="button" onClick={onOpenFileChanges} disabled={!onOpenFileChanges}>
-            <Badge variant="outline" className="gap-1 hover:bg-muted">
+            <Badge variant="outline" className="shrink-0 gap-1 hover:bg-muted">
             <GitBranch className="h-3 w-3" />
             变更 {diffList.length} 文件 +{additions} -{deletions}
             </Badge>
@@ -65,7 +65,7 @@ export function PromptToolbar({ sessionID, onOpenFileChanges }: PromptToolbarPro
           {todoList.slice(0, 5).map((todo, index) => (
             <div
               key={todo.id ?? `${todo.content}-${index}`}
-              className="flex max-w-64 shrink-0 items-center gap-1 rounded-md border bg-muted/40 px-2 py-1"
+              className="flex max-w-[75vw] shrink-0 items-center gap-1 rounded-md border bg-muted/40 px-2 py-1 sm:max-w-64"
             >
               {todo.completed || todo.status === "completed" ? (
                 <CheckCircle2 className="h-3 w-3 text-green-600" />
@@ -84,7 +84,7 @@ export function PromptToolbar({ sessionID, onOpenFileChanges }: PromptToolbarPro
               key={diff.file}
               type="button"
               onClick={onOpenFileChanges}
-              className="max-w-72 shrink-0 truncate rounded-md border bg-muted/40 px-2 py-1 text-left hover:bg-muted"
+              className="max-w-[78vw] shrink-0 truncate rounded-md border bg-muted/40 px-2 py-1 text-left hover:bg-muted sm:max-w-72"
             >
               {diff.status ?? "modified"} {diff.file} (+{diff.additions} -{diff.deletions})
             </button>

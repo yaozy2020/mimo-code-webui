@@ -119,10 +119,10 @@ export function InputBar({ onSend, onAbort, busy }: InputBarProps) {
   }
 
   return (
-    <div className="border-t bg-background p-2 sm:p-4">
-      <div className="mx-auto flex max-w-4xl flex-col gap-2 rounded-xl border bg-muted/30 p-2 shadow-sm">
+    <div className="border-t bg-background/90 p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur sm:p-4">
+      <div className="mx-auto flex max-w-4xl flex-col gap-2 rounded-2xl border bg-background/95 p-2 shadow-lg shadow-black/5">
         {suggestions.length > 0 && (
-          <div className="grid gap-1 rounded-lg border bg-background p-2 text-xs shadow-sm sm:grid-cols-2">
+          <div className="grid max-h-32 gap-1 overflow-y-auto rounded-lg border bg-background p-2 text-xs shadow-sm sm:grid-cols-2">
             {suggestions.map((item) => (
               <button
                 key={item}
@@ -139,11 +139,11 @@ export function InputBar({ onSend, onAbort, busy }: InputBarProps) {
           </div>
         )}
         {attachments.length > 0 && (
-          <div className="flex flex-wrap gap-2 rounded-lg border bg-background p-2 text-xs">
+          <div className="flex max-h-24 flex-wrap gap-2 overflow-y-auto rounded-lg border bg-muted/30 p-2 text-xs">
             {attachments.map((attachment) => (
-              <div key={attachment.id} className="flex max-w-full items-center gap-2 rounded-md border bg-muted/50 px-2 py-1">
+              <div key={attachment.id} className="flex max-w-full items-center gap-2 rounded-full border bg-background px-2 py-1">
                 {attachment.mime.startsWith("image/") ? <ImagePlus className="h-3.5 w-3.5" /> : <FileText className="h-3.5 w-3.5" />}
-                <span className="truncate">{attachment.filename}</span>
+                <span className="max-w-[52vw] truncate sm:max-w-xs">{attachment.filename}</span>
                 <span className="text-muted-foreground">{Math.max(1, Math.round(attachment.size / 1024))}KB</span>
                 <button
                   type="button"
@@ -172,56 +172,60 @@ export function InputBar({ onSend, onAbort, busy }: InputBarProps) {
                   ? "描述图片、视频或多模态问题..."
                   : "让 MiMo Code 编写、修复或执行任务。输入 / 使用命令，输入 @ 引用上下文..."
           }
-          className="min-h-[88px] resize-none border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
+          className="min-h-[64px] resize-none border-0 bg-transparent text-sm focus-visible:ring-0 focus-visible:ring-offset-0 sm:min-h-[88px]"
           disabled={busy}
         />
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex min-w-0 flex-wrap items-center gap-1">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-center gap-1 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0">
             <Button
               type="button"
               size="sm"
               variant={mode === "build" ? "secondary" : "ghost"}
               onClick={() => setMode("build")}
-              className="h-8 gap-1 text-xs"
+              className="h-8 shrink-0 gap-1 rounded-full px-2 text-xs"
+              title="构建"
             >
               <Code2 className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">构建</span>
+              <span className={cn(mode === "build" ? "inline" : "hidden sm:inline")}>构建</span>
             </Button>
             <Button
               type="button"
               size="sm"
               variant={mode === "plan" ? "secondary" : "ghost"}
               onClick={() => setMode("plan")}
-              className="h-8 gap-1 text-xs"
+              className="h-8 shrink-0 gap-1 rounded-full px-2 text-xs"
+              title="规划"
             >
               <Search className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">规划</span>
+              <span className={cn(mode === "plan" ? "inline" : "hidden sm:inline")}>规划</span>
             </Button>
             <Button
               type="button"
               size="sm"
               variant={mode === "web-search" ? "secondary" : "ghost"}
               onClick={() => setMode("web-search")}
-              className="h-8 gap-1 text-xs"
+              className="h-8 shrink-0 gap-1 rounded-full px-2 text-xs"
+              title="联网"
             >
               <Globe className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">联网</span>
+              <span className={cn(mode === "web-search" ? "inline" : "hidden sm:inline")}>联网</span>
             </Button>
             <Button
               type="button"
               size="sm"
               variant={mode === "multimodal" ? "secondary" : "ghost"}
               onClick={() => setMode("multimodal")}
-              className="h-8 gap-1 text-xs"
+              className="h-8 shrink-0 gap-1 rounded-full px-2 text-xs"
+              title="多模态"
             >
               <ImagePlus className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">多模态</span>
+              <span className={cn(mode === "multimodal" ? "inline" : "hidden sm:inline")}>多模态</span>
             </Button>
             <Button
               type="button"
               size="icon"
               variant="ghost"
-              className="h-8 w-8"
+              className="h-8 w-8 shrink-0 rounded-full"
               title="添加附件"
               disabled={busy}
               onClick={() => fileInputRef.current?.click()}
@@ -230,8 +234,9 @@ export function InputBar({ onSend, onAbort, busy }: InputBarProps) {
             </Button>
             <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileChange} />
           </div>
+          <div className="flex justify-end">
           {busy ? (
-            <Button size="icon" variant="destructive" onClick={onAbort} className="h-8 w-8 rounded-full">
+            <Button size="icon" variant="destructive" onClick={onAbort} className="h-9 w-9 rounded-full">
               <Square className="h-4 w-4" />
             </Button>
           ) : (
@@ -239,11 +244,12 @@ export function InputBar({ onSend, onAbort, busy }: InputBarProps) {
               size="icon"
               onClick={handleSend}
               disabled={!text.trim() && attachments.length === 0}
-              className={cn("h-8 w-8 rounded-full", mode === "web-search" && "bg-blue-600 hover:bg-blue-700")}
+              className={cn("h-9 w-9 rounded-full", mode === "web-search" && "bg-blue-600 hover:bg-blue-700")}
             >
               <Send className="h-4 w-4" />
             </Button>
           )}
+          </div>
         </div>
       </div>
     </div>

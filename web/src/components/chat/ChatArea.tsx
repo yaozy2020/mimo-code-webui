@@ -251,9 +251,9 @@ export function ChatArea() {
 
   if (!activeSessionID) {
     return (
-      <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-5 px-4 text-center text-muted-foreground">
+      <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-5 overflow-auto px-4 py-8 text-center text-muted-foreground">
         <div>
-          <h2 className="text-2xl font-semibold text-foreground">选择工作区开始</h2>
+          <h2 className="text-2xl font-semibold tracking-tight text-foreground">选择工作区开始</h2>
           <p className="mt-2 max-w-xl text-sm">
             新建会话前先选择代码目录，或明确接入已有 MiMo 会话；WebUI 不再自动打开当前 CLI 会话。
           </p>
@@ -276,17 +276,17 @@ export function ChatArea() {
 
   return (
     <div className="flex min-w-0 flex-1 overflow-hidden">
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col bg-background/55">
         {activeSessionID && (
           <PromptToolbar sessionID={activeSessionID} onOpenFileChanges={() => setShowFileChanges(true)} />
         )}
         {sessionMessages.length === 0 && !busy && (
-          <div className="flex flex-1 flex-col items-center justify-center gap-5 px-4 text-center text-muted-foreground">
+          <div className="flex flex-1 flex-col items-center justify-center gap-5 overflow-auto px-4 py-8 text-center text-muted-foreground">
             <div>
-              <h2 className="text-2xl font-semibold text-foreground">MiMo Code</h2>
+              <h2 className="text-2xl font-semibold tracking-tight text-foreground">MiMo Code</h2>
               <p className="mt-1 text-sm">用于编码、规划、搜索和审批的 MiMo 代理工作台。</p>
             </div>
-            <div className="grid w-full max-w-2xl gap-2 sm:grid-cols-3">
+            <div className="grid w-full max-w-2xl gap-2 md:grid-cols-3">
               {["解释这个项目", "规划一次安全重构", "查找高风险代码路径"].map((label) => (
                 <Button key={label} variant="outline" onClick={() => handleSend(label, "plan")}>
                   {label}

@@ -48,17 +48,17 @@ export function Header({ onOpenSidebar, onOpenSettings, onOpenDiagnostics }: Hea
   }
 
   return (
-    <header className="flex h-14 items-center justify-between gap-2 border-b bg-background/95 px-2 sm:px-4">
+    <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b bg-background/85 px-2 shadow-sm backdrop-blur sm:px-4">
       <div className="flex min-w-0 items-center gap-2 sm:gap-3">
         <Button size="icon" variant="ghost" onClick={onOpenSidebar} className="h-9 w-9 shrink-0 md:hidden" title="会话">
           <Menu className="h-5 w-5" />
         </Button>
-        <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary text-primary-foreground">
+        <div className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm sm:flex">
           <Bot className="h-4 w-4" />
         </div>
-        <div className="min-w-0">
+        <div className="min-w-0 max-w-[46vw] sm:max-w-none">
           <div className="flex items-center gap-2">
-            <h1 className="truncate text-base font-semibold">MiMo Code</h1>
+            <h1 className="truncate text-base font-semibold tracking-tight">MiMo Code</h1>
             <span
               className={`h-2 w-2 rounded-full ${status.mimoHealthy ? "bg-emerald-500" : "bg-red-500"}`}
               title={status.mimoHealthy ? "mimo serve 已连接" : "mimo serve 未连接"}
@@ -66,7 +66,7 @@ export function Header({ onOpenSidebar, onOpenSettings, onOpenDiagnostics }: Hea
           </div>
           <Select
             aria-label="切换模型"
-            className="mt-0.5 h-6 max-w-40 border-0 bg-transparent px-0 py-0 text-xs text-muted-foreground shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 sm:max-w-64"
+            className="mt-0.5 h-6 max-w-[42vw] truncate border-0 bg-transparent px-0 py-0 text-xs text-muted-foreground shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 sm:max-w-64"
             value={selectedModelValue}
             onChange={(event) => handleModelChange(event.target.value)}
           >
@@ -80,7 +80,9 @@ export function Header({ onOpenSidebar, onOpenSettings, onOpenDiagnostics }: Hea
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-1 sm:gap-2">
-        <Badge variant={sessionState === "busy" ? "default" : "secondary"}>{sessionState}</Badge>
+        <Badge variant={sessionState === "busy" ? "default" : "secondary"} className="max-w-20 truncate px-2 text-[10px] sm:max-w-none sm:text-xs">
+          {sessionState}
+        </Badge>
         <Button size="sm" variant="ghost" onClick={() => setWorkspaceDialogOpen(true)} className="hidden gap-1 sm:inline-flex">
           <Plus className="h-4 w-4" />
           新建

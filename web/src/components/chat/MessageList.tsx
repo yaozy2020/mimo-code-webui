@@ -31,8 +31,8 @@ export function MessageList() {
   }, [activeSessionID, sessionMessages])
 
   return (
-    <ScrollArea ref={scrollRef} className="flex-1 px-4" onScroll={updateStickyState}>
-      <div className="mx-auto max-w-3xl py-6">
+    <ScrollArea ref={scrollRef} className="flex-1 px-2 sm:px-4" onScroll={updateStickyState}>
+      <div className="mx-auto max-w-3xl py-4 sm:py-6">
         {sessionMessages.map((message) => (
           <MessageBubble
             key={message.id}
