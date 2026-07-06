@@ -11,9 +11,10 @@ const statusLabels = {
 
 interface PromptToolbarProps {
   sessionID: string
+  onOpenFileChanges?: () => void
 }
 
-export function PromptToolbar({ sessionID }: PromptToolbarProps) {
+export function PromptToolbar({ sessionID, onOpenFileChanges }: PromptToolbarProps) {
   const { agentStatus, contextUsage, gitStatus, todos } = useAppState()
   const { sessionDiffs } = useAppState()
   const status = agentStatus[sessionID]
@@ -51,10 +52,12 @@ export function PromptToolbar({ sessionID }: PromptToolbarProps) {
         )}
         {todoList.length > 0 && <Badge variant="outline">任务 {completedTodos}/{todoList.length}</Badge>}
         {diffList.length > 0 && (
-          <Badge variant="outline" className="gap-1">
+          <button type="button" onClick={onOpenFileChanges} disabled={!onOpenFileChanges}>
+            <Badge variant="outline" className="gap-1 hover:bg-muted">
             <GitBranch className="h-3 w-3" />
             变更 {diffList.length} 文件 +{additions} -{deletions}
-          </Badge>
+            </Badge>
+          </button>
         )}
       </div>
       {todoList.length > 0 && (
@@ -77,9 +80,14 @@ export function PromptToolbar({ sessionID }: PromptToolbarProps) {
       {diffList.length > 0 && (
         <div className="mt-2 flex gap-2 overflow-x-auto pb-1 text-xs text-muted-foreground">
           {diffList.slice(0, 5).map((diff) => (
-            <div key={diff.file} className="max-w-72 shrink-0 truncate rounded-md border bg-muted/40 px-2 py-1">
+            <button
+              key={diff.file}
+              type="button"
+              onClick={onOpenFileChanges}
+              className="max-w-72 shrink-0 truncate rounded-md border bg-muted/40 px-2 py-1 text-left hover:bg-muted"
+            >
               {diff.status ?? "modified"} {diff.file} (+{diff.additions} -{diff.deletions})
-            </div>
+            </button>
           ))}
         </div>
       )}

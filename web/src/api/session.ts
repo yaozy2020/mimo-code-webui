@@ -1,5 +1,5 @@
 import { fetchJson } from "./client"
-import type { Message, MessagePart, Session, TodoItem } from "@/types"
+import type { Message, MessagePart, Session, SnapshotFileDiff, TodoItem } from "@/types"
 
 export interface SessionListResponse {
   sessions?: Session[]
@@ -105,6 +105,10 @@ export async function getMessages(sessionID: string, limit = 50, before?: string
 
 export async function getTodos(sessionID: string): Promise<TodoItem[]> {
   return fetchJson<TodoItem[]>(`/session/${sessionID}/todo`)
+}
+
+export async function getSessionDiff(sessionID: string, messageID: string): Promise<SnapshotFileDiff[]> {
+  return fetchJson<SnapshotFileDiff[]>(`/session/${sessionID}/diff?messageID=${encodeURIComponent(messageID)}`)
 }
 
 export async function deleteSession(sessionID: string): Promise<void> {

@@ -2,8 +2,9 @@ import { useCallback, useEffect, useState } from "react"
 import { Plus } from "lucide-react"
 import { fetchRuntimeModels, runLocalPrompt } from "@/api/client"
 import { abortSession, modelSelectionToPayload, sendPrompt } from "@/api/message"
-import { createSession, getMessages, getTodos } from "@/api/session"
+import { createSession, getMessages, getSessionDiff, getTodos } from "@/api/session"
 import { Button } from "@/components/ui/button"
+import { FileChangesPanel } from "@/components/files/FileChangesPanel"
 import { useNewChat } from "@/hooks/useNewChat"
 import { createClientID } from "@/lib/utils"
 import { useAppDispatch, useAppState } from "@/stores/appStore"
@@ -36,10 +37,15 @@ async function waitForAssistantMessages(sessionID: string, knownAssistantIDs: Se
   return null
 }
 
+function latestUserMessageID(messages: Message[]) {
+  return [...messages].reverse().find((message) => message.role === "user")?.id
+}
+
 export function ChatArea() {
   const dispatch = useAppDispatch()
-  const { activeSessionID, agentStatus, messages, settings } = useAppState()
+  const { activeSessionID, agentStatus, messages, sessionDiffs, settings } = useAppState()
   const [loading, setLoading] = useState(true)
+  const [showFileChanges, setShowFileChanges] = useState(false)
   const newChat = useNewChat()
 
   const busy = activeSessionID ? agentStatus[activeSessionID]?.state === "busy" : false
@@ -84,6 +90,11 @@ export function ChatArea() {
         const msgs = await getMessages(activeSessionID)
         if (cancelled) return
         dispatch({ type: "SET_MESSAGES", sessionID: activeSessionID, messages: msgs })
+        const messageID = latestUserMessageID(msgs)
+        if (messageID) {
+          const diff = await getSessionDiff(activeSessionID, messageID)
+          if (!cancelled) dispatch({ type: "SET_SESSION_DIFF", sessionID: activeSessionID, diff })
+        }
       } catch (error) {
         console.error("[ChatArea] failed to load messages:", error)
       }
@@ -125,6 +136,11 @@ export function ChatArea() {
         if (!cancelled) {
           dispatch({ type: "SET_MESSAGES", sessionID: activeSessionID, messages: msgs })
           dispatch({ type: "SET_TODOS", sessionID: activeSessionID, todos })
+        }
+        const messageID = latestUserMessageID(msgs)
+        if (messageID) {
+          const diff = await getSessionDiff(activeSessionID, messageID)
+          if (!cancelled) dispatch({ type: "SET_SESSION_DIFF", sessionID: activeSessionID, diff })
         }
       } catch (error) {
         console.error("[ChatArea] failed to refresh messages:", error)
@@ -242,31 +258,38 @@ export function ChatArea() {
   }
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col">
-      {activeSessionID && <PromptToolbar sessionID={activeSessionID} />}
-      {sessionMessages.length === 0 && !busy && (
-        <div className="flex flex-1 flex-col items-center justify-center gap-5 px-4 text-center text-muted-foreground">
-          <div>
-            <h2 className="text-2xl font-semibold text-foreground">MiMo Code</h2>
-            <p className="mt-1 text-sm">用于编码、规划、搜索和审批的 MiMo 代理工作台。</p>
+    <div className="flex min-w-0 flex-1 overflow-hidden">
+      <div className="flex min-w-0 flex-1 flex-col">
+        {activeSessionID && (
+          <PromptToolbar sessionID={activeSessionID} onOpenFileChanges={() => setShowFileChanges(true)} />
+        )}
+        {sessionMessages.length === 0 && !busy && (
+          <div className="flex flex-1 flex-col items-center justify-center gap-5 px-4 text-center text-muted-foreground">
+            <div>
+              <h2 className="text-2xl font-semibold text-foreground">MiMo Code</h2>
+              <p className="mt-1 text-sm">用于编码、规划、搜索和审批的 MiMo 代理工作台。</p>
+            </div>
+            <div className="grid w-full max-w-2xl gap-2 sm:grid-cols-3">
+              {["解释这个项目", "规划一次安全重构", "查找高风险代码路径"].map((label) => (
+                <Button key={label} variant="outline" onClick={() => handleSend(label, "plan")}>
+                  {label}
+                </Button>
+              ))}
+            </div>
+            <Button variant="outline" onClick={() => newChat()} className="gap-2">
+              <Plus className="h-4 w-4" />
+              新建会话
+            </Button>
           </div>
-          <div className="grid w-full max-w-2xl gap-2 sm:grid-cols-3">
-            {["解释这个项目", "规划一次安全重构", "查找高风险代码路径"].map((label) => (
-              <Button key={label} variant="outline" onClick={() => handleSend(label, "plan")}>
-                {label}
-              </Button>
-            ))}
-          </div>
-          <Button variant="outline" onClick={() => newChat()} className="gap-2">
-            <Plus className="h-4 w-4" />
-            新建会话
-          </Button>
-        </div>
+        )}
+        {(sessionMessages.length > 0 || busy) && <MessageList />}
+        <PermissionDialog />
+        <QuestionDialog />
+        <InputBar onSend={handleSend} onAbort={handleAbort} busy={busy} />
+      </div>
+      {activeSessionID && showFileChanges && (sessionDiffs[activeSessionID]?.length ?? 0) > 0 && (
+        <FileChangesPanel diffs={sessionDiffs[activeSessionID]} onClose={() => setShowFileChanges(false)} />
       )}
-      {(sessionMessages.length > 0 || busy) && <MessageList />}
-      <PermissionDialog />
-      <QuestionDialog />
-      <InputBar onSend={handleSend} onAbort={handleAbort} busy={busy} />
     </div>
   )
 }
