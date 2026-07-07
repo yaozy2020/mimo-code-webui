@@ -26,7 +26,13 @@ export function Header({ onOpenSidebar, onOpenSettings, onOpenDiagnostics }: Hea
     let cancelled = false
     fetchAvailableModels()
       .then((models) => {
-        if (!cancelled) setRuntimeModels(models)
+        if (cancelled) return
+        setRuntimeModels(models)
+        const limits: Record<string, number> = {}
+        for (const model of models) {
+          if (model.contextLimit) limits[`${model.provider}/${model.id}`] = model.contextLimit
+        }
+        dispatch({ type: "SET_MODEL_LIMITS", limits })
       })
       .catch(() => {
         if (!cancelled) setRuntimeModels([])
@@ -34,7 +40,7 @@ export function Header({ onOpenSidebar, onOpenSettings, onOpenDiagnostics }: Hea
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [dispatch])
 
   const modelOptions = runtimeModels.length > 0 ? runtimeModels : [{ id: settings.model || "mimo-auto", name: settings.model || "mimo-auto", provider: "当前" }]
   const selectedModel = runtimeModels.find((model) => model.id === settings.model || `${model.provider}/${model.id}` === settings.model)
@@ -87,11 +93,12 @@ export function Header({ onOpenSidebar, onOpenSettings, onOpenDiagnostics }: Hea
           <Plus className="h-4 w-4" />
           新建
         </Button>
-        <Button size="icon" variant="ghost" onClick={onOpenDiagnostics} title="诊断">
+        <Button size="icon" variant="ghost" onClick={onOpenDiagnostics} title="诊断" className="hidden sm:inline-flex">
           <Activity className="h-5 w-5" />
         </Button>
-        <Button size="icon" variant="ghost" onClick={onOpenSettings} title="设置">
-          <Settings className="h-5 w-5" />
+        <Button size="sm" variant="ghost" onClick={onOpenSettings} className="gap-1 text-xs sm:text-sm" title="设置">
+          <Settings className="h-4 w-4 sm:h-5 sm:w-5" />
+          <span className="hidden sm:inline">设置</span>
         </Button>
       </div>
       <WorkspaceSessionDialog open={workspaceDialogOpen} onOpenChange={setWorkspaceDialogOpen} defaultWorkspace={defaultWorkspace} />

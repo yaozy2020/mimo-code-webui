@@ -1,6 +1,8 @@
-import { CheckCircle2, Circle, GitBranch, Loader2, ScrollText, Shield } from "lucide-react"
+import { useState } from "react"
+import { CheckCircle2, Circle, ChevronDown, ChevronRight, GitBranch, Loader2, ScrollText, Shield } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { useAppState } from "@/stores/appStore"
+import { getSessionSource } from "./sessionSource"
 
 const statusLabels = {
   idle: "空闲",
@@ -9,14 +11,20 @@ const statusLabels = {
   waiting_for_question: "等待回答",
 }
 
+function formatTokenCount(tokens: number) {
+  if (tokens >= 1000) return `${(tokens / 1000).toFixed(tokens >= 10000 ? 1 : 0)}K`
+  return String(tokens)
+}
+
 interface PromptToolbarProps {
   sessionID: string
   onOpenFileChanges?: () => void
 }
 
 export function PromptToolbar({ sessionID, onOpenFileChanges }: PromptToolbarProps) {
-  const { agentStatus, contextUsage, gitStatus, todos } = useAppState()
+  const { agentStatus, attachedSessionIDs, contextUsage, gitStatus, ownedSessionIDs, todos } = useAppState()
   const { sessionDiffs } = useAppState()
+  const [todoExpanded, setTodoExpanded] = useState(false)
   const status = agentStatus[sessionID]
   const statusState = status?.state ?? "idle"
   const usage = contextUsage[sessionID]
@@ -25,8 +33,8 @@ export function PromptToolbar({ sessionID, onOpenFileChanges }: PromptToolbarPro
   const completedTodos = todoList.filter((todo) => todo.completed || todo.status === "completed").length
   const additions = diffList.reduce((sum, diff) => sum + diff.additions, 0)
   const deletions = diffList.reduce((sum, diff) => sum + diff.deletions, 0)
-  const contextPercent =
-    usage?.usedTokens !== undefined && usage.totalTokens ? Math.round((usage.usedTokens / usage.totalTokens) * 100) : undefined
+  const contextLabel = usage?.usedTokens !== undefined ? `上下文 ${formatTokenCount(usage.usedTokens)}` : undefined
+  const source = getSessionSource(sessionID, ownedSessionIDs, attachedSessionIDs)
 
   return (
     <div className="border-b bg-background/80 px-2 py-2 backdrop-blur sm:px-4">
@@ -38,10 +46,15 @@ export function PromptToolbar({ sessionID, onOpenFileChanges }: PromptToolbarPro
             )}
           {statusLabels[statusState]}
         </Badge>
-        {contextPercent !== undefined && (
+        {contextLabel && (
           <Badge variant="outline" className="shrink-0 gap-1">
             <ScrollText className="h-3 w-3" />
-            上下文 {contextPercent}%
+            {contextLabel}
+          </Badge>
+        )}
+        {source.external && (
+          <Badge variant="secondary" className="shrink-0" title={source.description}>
+            {source.label}
           </Badge>
         )}
         {(gitStatus.added > 0 || gitStatus.modified > 0 || gitStatus.deleted > 0) && (
@@ -50,7 +63,14 @@ export function PromptToolbar({ sessionID, onOpenFileChanges }: PromptToolbarPro
             +{gitStatus.added} ~{gitStatus.modified} -{gitStatus.deleted}
           </Badge>
         )}
-        {todoList.length > 0 && <Badge variant="outline" className="shrink-0">任务 {completedTodos}/{todoList.length}</Badge>}
+        {todoList.length > 0 && (
+          <button type="button" onClick={() => setTodoExpanded(!todoExpanded)}>
+            <Badge variant={todoExpanded ? "default" : "outline"} className="shrink-0 gap-1 hover:bg-muted">
+              {todoExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+              任务 {completedTodos}/{todoList.length}
+            </Badge>
+          </button>
+        )}
         {diffList.length > 0 && (
           <button type="button" onClick={onOpenFileChanges} disabled={!onOpenFileChanges}>
             <Badge variant="outline" className="shrink-0 gap-1 hover:bg-muted">
@@ -60,19 +80,21 @@ export function PromptToolbar({ sessionID, onOpenFileChanges }: PromptToolbarPro
           </button>
         )}
       </div>
-      {todoList.length > 0 && (
-        <div className="mt-2 flex gap-2 overflow-x-auto pb-1 text-xs text-muted-foreground">
-          {todoList.slice(0, 5).map((todo, index) => (
+      {todoExpanded && todoList.length > 0 && (
+        <div className="mt-2 max-h-[30vh] space-y-1 overflow-y-auto text-xs">
+          {todoList.map((todo, index) => (
             <div
               key={todo.id ?? `${todo.content}-${index}`}
-              className="flex max-w-[75vw] shrink-0 items-center gap-1 rounded-md border bg-muted/40 px-2 py-1 sm:max-w-64"
+              className="flex items-start gap-2 rounded-md border bg-muted/30 px-2.5 py-1.5"
             >
               {todo.completed || todo.status === "completed" ? (
-                <CheckCircle2 className="h-3 w-3 text-green-600" />
+                <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-green-600" />
+              ) : todo.status === "in_progress" ? (
+                <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
               ) : (
-                <Circle className="h-3 w-3" />
+                <Circle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
               )}
-              <span className="truncate">{todo.content}</span>
+              <span className="min-w-0 flex-1 break-words leading-relaxed text-foreground/80">{todo.content}</span>
             </div>
           ))}
         </div>

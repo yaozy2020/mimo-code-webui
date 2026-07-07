@@ -87,6 +87,29 @@ export function listManualModels(): ManualModelSummary[] {
   )
 }
 
+export function resolveOpenAICompatibleModel(model: string) {
+  const [providerID, modelID] = model.split("/", 2)
+  if (!providerID || !modelID) throw new Error("model must be provider/model")
+
+  const config = readMimoConfig()
+  const provider = config.provider?.[providerID]
+  const modelConfig = provider?.models?.[modelID]
+  const baseUrl =
+    provider?.api ||
+    (typeof provider?.options?.baseURL === "string" ? provider.options.baseURL : undefined) ||
+    (typeof provider?.options?.baseUrl === "string" ? provider.options.baseUrl : undefined)
+  const apiKey =
+    (typeof provider?.options?.apiKey === "string" ? provider.options.apiKey : undefined) ||
+    process.env[`${providerID.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`] ||
+    process.env.OPENAI_API_KEY
+
+  if (!provider || !modelConfig || !baseUrl) {
+    throw new Error(`OpenAI-compatible stream config not found for ${model}`)
+  }
+
+  return { providerID, modelID, baseUrl, apiKey }
+}
+
 export function addMimoModelConfig(input: ManualModelInput): ManualModelSummary {
   const providerID = validateConfigID(input.providerID, "providerID")
   const modelID = validateConfigID(input.modelID, "modelID")

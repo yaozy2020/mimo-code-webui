@@ -78,7 +78,11 @@ interface RawMessage {
     id: string
     sessionID: string
     role: string
+    providerID?: string
+    modelID?: string
+    tokens?: Message["tokens"]
     time?: { created?: number }
+    error?: { name?: string; message?: string; data?: { message?: string } }
   }
   parts: Array<{
     id: string
@@ -97,7 +101,9 @@ interface RawMessage {
 function rawToMessage(raw: RawMessage): Message {
   const { info, parts } = raw
   const textParts = parts.filter((p) => p.type === "text")
-  const content = textParts.map((p) => p.text ?? p.content ?? "").join("\n\n")
+  const textContent = textParts.map((p) => p.text ?? p.content ?? "").join("\n\n")
+  const errorMessage = info.error?.data?.message || info.error?.message || info.error?.name
+  const content = textContent || (errorMessage ? `模型调用失败：${errorMessage}` : "")
   const reasoning = parts.find((p) => p.type === "reasoning")
   const thinking = reasoning?.text ?? reasoning?.content
   const mappedParts: MessagePart[] = parts
@@ -121,6 +127,9 @@ function rawToMessage(raw: RawMessage): Message {
     content,
     thinking,
     parts: mappedParts,
+    providerID: info.providerID,
+    modelID: info.modelID,
+    tokens: info.tokens,
     time: { created: info.time?.created },
   }
 }

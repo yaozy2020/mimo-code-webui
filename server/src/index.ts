@@ -4,8 +4,9 @@ import fs from "node:fs"
 import net from "node:net"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { addMimoModelConfig, getProjectRoot, listManualModels, readMimoConfig } from "./config.js"
+import { addMimoModelConfig, getProjectRoot, listManualModels, readMimoConfig, resolveOpenAICompatibleModel } from "./config.js"
 import { checkHealth, detectMimo, ensureMimoServerForDirectory, listBuiltinModels, listManagedMimoServers, probeNativeModel, runMimoPrompt, startMimoServer, stopManagedMimoServers, stopMimoServer } from "./mimo.js"
+import { streamOpenAICompatible } from "./openaiStream.js"
 import { createRoutedMimoProxy } from "./proxy.js"
 
 const __filename = fileURLToPath(import.meta.url)
@@ -173,6 +174,40 @@ async function main() {
       res.json(await runMimoPrompt({ model, prompt }))
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : String(error) })
+    }
+  })
+  app.post("/local-run/stream", async (req, res) => {
+    const { model, prompt } = req.body as { model?: string; prompt?: string }
+    if (!model || !prompt) {
+      res.status(400).json({ error: "model and prompt are required" })
+      return
+    }
+
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+    })
+
+    const send = (event: unknown) => res.write(`data: ${JSON.stringify(event)}\n\n`)
+    const abort = new AbortController()
+    req.on("aborted", () => abort.abort())
+
+    try {
+      const config = resolveOpenAICompatibleModel(model)
+      await streamOpenAICompatible(
+        { model: config, prompt, signal: abort.signal },
+        {
+          onStart: () => send({ type: "start" }),
+          onDelta: (text) => send({ type: "delta", text }),
+          onError: (message) => send({ type: "error", error: message }),
+          onDone: () => send({ type: "done" }),
+        },
+      )
+    } catch (error) {
+      if (!abort.signal.aborted) send({ type: "error", error: error instanceof Error ? error.message : String(error) })
+    } finally {
+      res.end()
     }
   })
 

@@ -21,18 +21,19 @@ export function MessageList() {
   }
 
   useEffect(() => {
+    const sessionChanged = lastSessionIDRef.current !== activeSessionID
     if (lastSessionIDRef.current !== activeSessionID) {
       lastSessionIDRef.current = activeSessionID
       shouldStickToBottomRef.current = true
     }
 
     if (!shouldStickToBottomRef.current) return
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" })
+    bottomRef.current?.scrollIntoView({ behavior: sessionChanged ? "smooth" : "auto" })
   }, [activeSessionID, sessionMessages])
 
   return (
-    <ScrollArea ref={scrollRef} className="flex-1 px-2 sm:px-4" onScroll={updateStickyState}>
-      <div className="mx-auto max-w-3xl py-4 sm:py-6">
+    <ScrollArea ref={scrollRef} className="flex-1 px-3 sm:px-5" onScroll={updateStickyState}>
+      <div className="mx-auto max-w-3xl py-3">
         {sessionMessages.map((message) => (
           <MessageBubble
             key={message.id}

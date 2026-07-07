@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react"
-import { X } from "lucide-react"
+import { LogOut, Trash2 } from "lucide-react"
 import { fetchAvailableModels, saveManualModel, type RuntimeModel } from "@/api/client"
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
@@ -70,18 +71,24 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
     }
   }
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="fixed inset-0 bg-black/80" onClick={onClose} />
-      <div className="relative z-50 w-full max-w-md rounded-lg border bg-background p-6 shadow-lg">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">设置</h2>
-          <Button size="icon" variant="ghost" onClick={onClose}>
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
+  const handleClearAll = () => {
+    if (!window.confirm("确定清除所有 WebUI 本地数据？这将删除所有会话记录和设置。")) return
+    localStorage.clear()
+    window.location.reload()
+  }
 
-        <div className="space-y-4">
+  const handleLogout = () => {
+    dispatch({ type: "UPDATE_SETTINGS", settings: { authToken: "" } })
+    onClose()
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose() }}>
+      <DialogHeader>
+        <DialogTitle>设置</DialogTitle>
+      </DialogHeader>
+
+      <div className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="api-key">API 密钥</Label>
             <Input
@@ -219,8 +226,30 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
               }
             />
           </div>
+
+          <div className="space-y-2 rounded-md border border-destructive/30 bg-destructive/5 p-3">
+            <h3 className="text-sm font-medium text-destructive">退出与数据</h3>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              {settings.authToken && (
+                <Button size="sm" variant="outline" onClick={handleLogout} className="gap-1">
+                  <LogOut className="h-3.5 w-3.5" />
+                  退出登录
+                </Button>
+              )}
+              <Button size="sm" variant="outline" onClick={handleClearAll} className="gap-1 text-destructive">
+                <Trash2 className="h-3.5 w-3.5" />
+                清除本地数据
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              退出登录将清除认证令牌；清除本地数据将删除所有会话记录和设置，且不可恢复。
+            </p>
+          </div>
         </div>
-      </div>
-    </div>
+
+      <DialogFooter>
+        <Button variant="outline" onClick={onClose}>关闭</Button>
+      </DialogFooter>
+    </Dialog>
   )
 }

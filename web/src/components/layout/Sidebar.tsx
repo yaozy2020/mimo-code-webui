@@ -1,12 +1,14 @@
 import { useState } from "react"
-import { Clock3, Link, MessageSquarePlus, Trash2 } from "lucide-react"
+import { Clock3, GitFork, Link, MessageSquarePlus, Pencil, Trash2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { AttachSessionDialog } from "@/components/chat/AttachSessionDialog"
 import { WorkspaceSessionDialog } from "@/components/chat/WorkspaceSessionDialog"
+import { getSessionSource } from "@/components/chat/sessionSource"
 import { useSessions } from "@/hooks/useSessions"
 import { useAppState } from "@/stores/appStore"
 import { cn } from "@/lib/utils"
+import type { Message } from "@/types"
 
 function formatSessionTime(updated?: number) {
   if (!updated) return "暂无活动"
@@ -18,14 +20,18 @@ function formatSessionTime(updated?: number) {
   }).format(updated)
 }
 
+function latestUserMessageID(messages: Message[]) {
+  return [...messages].reverse().find((message) => message.role === "user")?.id
+}
+
 interface SidebarProps {
   open: boolean
   onClose: () => void
 }
 
 function SessionList({ onSelect }: { onSelect?: () => void }) {
-  const { sessions, activeSessionID, setActive, remove } = useSessions()
-  const { agentStatus, attachedSessionIDs, currentWorkspace, ownedSessionIDs, pendingPermissions, pendingQuestions, todos, sessionDiffs } = useAppState()
+  const { sessions, activeSessionID, setActive, remove, rename, fork } = useSessions()
+  const { agentStatus, attachedSessionIDs, currentWorkspace, ownedSessionIDs, pendingPermissions, pendingQuestions, todos, sessionDiffs, messages } = useAppState()
   const [workspaceDialogOpen, setWorkspaceDialogOpen] = useState(false)
   const [attachDialogOpen, setAttachDialogOpen] = useState(false)
   const activeSession = sessions.find((session) => session.id === activeSessionID)
@@ -63,6 +69,9 @@ function SessionList({ onSelect }: { onSelect?: () => void }) {
           const questionCount = pendingQuestions[session.id]?.length ?? 0
           const todoCount = todos[session.id]?.length ?? 0
           const diffCount = sessionDiffs[session.id]?.length ?? 0
+          const source = getSessionSource(session.id, ownedSessionIDs, attachedSessionIDs)
+          const latestMessageID = latestUserMessageID(messages[session.id] || [])
+          const removeTitle = owned || !attached ? "删除会话" : "移除接入"
           return (
             <div
               key={session.id}
@@ -86,8 +95,9 @@ function SessionList({ onSelect }: { onSelect?: () => void }) {
                   <span className="truncate">{formatSessionTime(session.time?.updated ?? session.time?.created)}</span>
                 </div>
                 {session.directory && <div className="mt-1 truncate text-xs text-muted-foreground" title={session.directory}>{session.directory}</div>}
-                {(status || permissionCount > 0 || questionCount > 0 || todoCount > 0 || diffCount > 0) && (
+                {(source.external || status || permissionCount > 0 || questionCount > 0 || todoCount > 0 || diffCount > 0) && (
                   <div className="mt-2 flex flex-wrap gap-1">
+                    {source.external && <Badge variant="secondary">外部会话</Badge>}
                     {status === "busy" && <Badge variant="secondary">运行中</Badge>}
                     {status === "waiting_for_permission" && <Badge variant="destructive">等待授权</Badge>}
                     {status === "waiting_for_question" && <Badge variant="destructive">等待回答</Badge>}
@@ -98,15 +108,43 @@ function SessionList({ onSelect }: { onSelect?: () => void }) {
                   </div>
                 )}
               </button>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-8 w-8 shrink-0 opacity-100 sm:h-7 sm:w-7 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
-                onClick={() => remove(session.id, { deleteRemote: owned || !attached })}
-                title={owned || !attached ? "删除会话" : "从 WebUI 移除"}
-              >
-                <Trash2 className="h-3 w-3" />
-              </Button>
+              <div className="flex shrink-0 flex-col gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-8 w-8 sm:h-7 sm:w-7"
+                  onClick={() => {
+                    const nextTitle = window.prompt("重命名会话", session.title && !session.title.startsWith("New session - ") ? session.title : "")
+                    if (nextTitle?.trim()) void rename(session.id, nextTitle.trim())
+                  }}
+                  title="重命名会话"
+                  aria-label="重命名会话"
+                >
+                  <Pencil className="h-3 w-3" />
+                </Button>
+                {latestMessageID && (
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-8 w-8 sm:h-7 sm:w-7"
+                    onClick={() => void fork(session.id, latestMessageID)}
+                    title="从最新用户消息分叉"
+                    aria-label="从最新用户消息分叉"
+                  >
+                    <GitFork className="h-3 w-3" />
+                  </Button>
+                )}
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-8 w-8 sm:h-7 sm:w-7"
+                  onClick={() => remove(session.id, { deleteRemote: owned || !attached })}
+                  title={removeTitle}
+                  aria-label={removeTitle}
+                >
+                  <Trash2 className="h-3 w-3" />
+                </Button>
+              </div>
             </div>
           )
         })}

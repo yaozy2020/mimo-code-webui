@@ -30,6 +30,20 @@ export interface Message {
   parts?: MessagePart[]
   thinking?: string
   toolCalls?: ToolCall[]
+  providerID?: string
+  modelID?: string
+  tokens?: {
+    total?: number
+    input?: number
+    output?: number
+    reasoning?: number
+    cache?: {
+      read?: number
+      write?: number
+    }
+  }
+  optimistic?: boolean
+  errorKey?: string
   time?: {
     created?: number
   }
@@ -142,6 +156,7 @@ export type StreamEvent =
   | { type: "message.part.updated"; properties: { sessionID: string; part: MessagePart } }
   | { type: "message.updated"; properties: { sessionID: string; info: Message } }
   | { type: "session.updated"; properties: { sessionID: string; info?: { state?: string }; status?: { state?: string } } }
+  | { type: "session.error"; properties: { sessionID: string; error?: { name?: string; message?: string; data?: { message?: string } } } }
   | { type: "permission.asked"; properties: PermissionRequest }
   | { type: "permission.replied"; properties: { sessionID: string; requestID: string; reply?: "once" | "always" | "reject" } }
   | { type: "question.asked"; properties: QuestionRequest }

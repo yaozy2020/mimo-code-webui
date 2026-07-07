@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
 import { Link, Plus } from "lucide-react"
-import { fetchRuntimeModels, runLocalPrompt } from "@/api/client"
 import { abortSession, modelSelectionToPayload, sendPrompt } from "@/api/message"
 import { getMessages, getSessionDiff, getTodos } from "@/api/session"
 import { Button } from "@/components/ui/button"
@@ -15,29 +14,9 @@ import { PermissionDialog } from "./PermissionDialog"
 import { PromptToolbar } from "./PromptToolbar"
 import { QuestionDialog } from "./QuestionDialog"
 import { WorkspaceSessionDialog } from "./WorkspaceSessionDialog"
+import { chooseModelRoute } from "./modelRouting"
 
-const ASSISTANT_SYNC_ATTEMPTS = 30
-const ASSISTANT_SYNC_INTERVAL_MS = 1500
 const MESSAGE_REFRESH_INTERVAL_MS = 3000
-
-function sleep(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms))
-}
-
-async function waitForAssistantMessages(sessionID: string, knownAssistantIDs: Set<string>, directory?: string) {
-  for (let attempt = 0; attempt < ASSISTANT_SYNC_ATTEMPTS; attempt += 1) {
-    await sleep(ASSISTANT_SYNC_INTERVAL_MS)
-    const msgs = await getMessages(sessionID, 50, undefined, directory)
-    const assistantMessages = msgs.filter(
-      (message) => message.role === "assistant" && !knownAssistantIDs.has(message.id) && Boolean(message.content?.trim()),
-    )
-    if (assistantMessages.length > 0) {
-      return assistantMessages
-    }
-  }
-  return null
-}
-
 function latestUserMessageID(messages: Message[]) {
   return [...messages].reverse().find((message) => message.role === "user")?.id
 }
@@ -105,21 +84,22 @@ export function ChatArea() {
     const refresh = async () => {
       if (document.visibilityState !== "visible") return
       try {
-        const [msgs, todos] = await Promise.all([
-          getMessages(activeSessionID, 50, undefined, activeDirectory),
+        const [todos] = await Promise.all([
           getTodos(activeSessionID, activeDirectory),
         ])
         if (!cancelled) {
-          dispatch({ type: "SET_MESSAGES", sessionID: activeSessionID, messages: msgs })
           dispatch({ type: "SET_TODOS", sessionID: activeSessionID, todos })
         }
-        const messageID = latestUserMessageID(msgs)
-        if (messageID) {
-          const diff = await getSessionDiff(activeSessionID, messageID, activeDirectory)
-          if (!cancelled) dispatch({ type: "SET_SESSION_DIFF", sessionID: activeSessionID, diff })
+        const msgs = await getMessages(activeSessionID, 50, undefined, activeDirectory)
+        if (!cancelled) {
+          const messageID = latestUserMessageID(msgs)
+          if (messageID) {
+            const diff = await getSessionDiff(activeSessionID, messageID, activeDirectory)
+            if (!cancelled) dispatch({ type: "SET_SESSION_DIFF", sessionID: activeSessionID, diff })
+          }
         }
       } catch (error) {
-        console.error("[ChatArea] failed to refresh messages:", error)
+        console.error("[ChatArea] failed to refresh:", error)
       }
     }
 
@@ -133,9 +113,13 @@ export function ChatArea() {
   const handleSend = useCallback(
     async (text: string, mode: PromptMode, attachments: PendingAttachment[] = []) => {
       if (!activeSessionID) return
+      dispatch({
+        type: "SET_AGENT_STATUS",
+        sessionID: activeSessionID,
+        status: { sessionID: activeSessionID, state: "busy" },
+      })
 
-      const promptText =
-        mode === "plan" ? `请先规划。先检查上下文并提出最安全的实现方案，不要直接修改代码。\n\n${text}` : text
+      const promptText = text
       const attachmentText = attachments
         .filter((attachment) => typeof attachment.content === "string")
         .map((attachment) => `附件 ${attachment.filename}:\n${attachment.content}`)
@@ -151,6 +135,7 @@ export function ChatArea() {
         sessionID: activeSessionID,
         role: "user",
         content: text || attachments.map((attachment) => `附件：${attachment.filename}`).join("\n"),
+        optimistic: true,
         parts: [
           ...(text ? [{ id: createClientID("part"), type: "text" as const, content: text }] : []),
           ...attachments.map((attachment) => ({
@@ -164,71 +149,25 @@ export function ChatArea() {
         ],
         time: { created: Date.now() },
       }
-      const knownAssistantIDs = new Set(
-        (messages[activeSessionID] || []).filter((message) => message.role === "assistant").map((message) => message.id),
-      )
       dispatch({ type: "ADD_MESSAGE", sessionID: activeSessionID, message: userMessage })
 
       try {
         const selectedModel = modelSelectionToPayload(settings.model)
-        if (selectedModel) {
-          const isDefaultModel = selectedModel.providerID === "mimo" && selectedModel.modelID === "mimo-auto"
-          if (!isDefaultModel) {
-            const model = `${selectedModel.providerID}/${selectedModel.modelID}`
-            const runtimeModels = await fetchRuntimeModels()
-            const isRuntimeModel = runtimeModels.some(
-              (runtimeModel) => runtimeModel.provider === selectedModel.providerID && runtimeModel.id === selectedModel.modelID,
-            )
-            if (isRuntimeModel) {
-              await sendPrompt(activeSessionID, {
-                agent: mode === "web-search" ? "explore" : "build",
-                model: settings.model,
-                parts: promptParts,
-                variant: mode === "multimodal" ? "multimodal" : undefined,
-                directory: activeDirectory,
-              })
-              void waitForAssistantMessages(activeSessionID, knownAssistantIDs, activeDirectory)
-                .then((assistantMessages) => {
-                  assistantMessages?.forEach((message) => {
-                    dispatch({ type: "ADD_MESSAGE", sessionID: activeSessionID, message })
-                  })
-                })
-                .catch((error) => console.error("[ChatArea] failed to sync assistant messages:", error))
-              return
-            }
-
-            if (attachments.length > 0) {
-              throw new Error("附件上传仅支持当前运行中的原生模型链路，请选择已加载的 runtime 模型或默认模型。")
-            }
-
-            const result = await runLocalPrompt({ model, prompt: promptText })
-            const assistantMessage: Message = {
-              id: createClientID("msg"),
-              sessionID: activeSessionID,
-              role: "assistant",
-              content: result.text || "（模型没有返回文本）",
-              time: { created: Date.now() },
-            }
-            dispatch({ type: "ADD_MESSAGE", sessionID: activeSessionID, message: assistantMessage })
-            return
-          }
-        }
+        const route = chooseModelRoute({ selectedModel, runtimeModel: false })
+        if (route !== "native") throw new Error(`Unsupported model route: ${route}`)
         await sendPrompt(activeSessionID, {
-          agent: mode === "web-search" ? "explore" : "build",
+          agent: mode,
           model: settings.model,
           parts: promptParts,
-          variant: mode === "multimodal" ? "multimodal" : undefined,
           directory: activeDirectory,
         })
-        void waitForAssistantMessages(activeSessionID, knownAssistantIDs, activeDirectory)
-          .then((assistantMessages) => {
-            assistantMessages?.forEach((message) => {
-              dispatch({ type: "ADD_MESSAGE", sessionID: activeSessionID, message })
-            })
-          })
-          .catch((error) => console.error("[ChatArea] failed to sync assistant messages:", error))
       } catch (error) {
         console.error("[ChatArea] failed to send prompt:", error)
+        dispatch({
+          type: "SET_AGENT_STATUS",
+          sessionID: activeSessionID,
+          status: { sessionID: activeSessionID, state: "idle" },
+        })
         const errorMessage: Message = {
           id: createClientID("msg"),
           sessionID: activeSessionID,

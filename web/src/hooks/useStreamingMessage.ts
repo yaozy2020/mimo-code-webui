@@ -1,4 +1,5 @@
 import { AuthRequiredError, createEventStream } from "@/api/client"
+import { getMessages, getTodos } from "@/api/session"
 import type { Message, PermissionRequest, QuestionRequest, SnapshotFileDiff, StreamEvent } from "@/types"
 import { useAppDispatch, useAppState } from "@/stores/appStore"
 import { useEffect, useRef } from "react"
@@ -8,6 +9,13 @@ export function useStreamingMessage() {
   const { activeSessionID, sessions } = useAppState()
   const activeDirectory = activeSessionID ? sessions.find((session) => session.id === activeSessionID)?.directory : undefined
   const abortRef = useRef<AbortController | null>(null)
+  const activeSessionRef = useRef<string | null>(activeSessionID)
+  const activeDirectoryRef = useRef<string | undefined>(activeDirectory)
+
+  useEffect(() => {
+    activeSessionRef.current = activeSessionID
+    activeDirectoryRef.current = activeDirectory
+  }, [activeDirectory, activeSessionID])
 
   useEffect(() => {
     const abort = new AbortController()
@@ -16,7 +24,11 @@ export function useStreamingMessage() {
     createEventStream(
       abort.signal,
       (event: StreamEvent) => {
-        handleEvent(event, dispatch)
+        handleEvent(event, dispatch, {
+          getActiveSessionID: () => activeSessionRef.current,
+          getActiveDirectory: () => activeDirectoryRef.current,
+          signal: abort.signal,
+        })
       },
       (error) => {
         if (error instanceof AuthRequiredError) {
@@ -38,7 +50,38 @@ export function useStreamingMessage() {
   }
 }
 
-function handleEvent(event: StreamEvent, dispatch: ReturnType<typeof useAppDispatch>) {
+interface StreamEventContext {
+  getActiveSessionID: () => string | null
+  getActiveDirectory: () => string | undefined
+  signal: AbortSignal
+}
+
+function syncSessionSnapshot(
+  sessionID: string,
+  directory: string | undefined,
+  dispatch: ReturnType<typeof useAppDispatch>,
+  signal: AbortSignal,
+) {
+  window.setTimeout(() => {
+    void (async () => {
+      if (signal.aborted) return
+      try {
+        const [messages, todos] = await Promise.all([getMessages(sessionID, 50, undefined, directory), getTodos(sessionID, directory)])
+        if (signal.aborted) return
+        dispatch({ type: "SET_MESSAGES", sessionID, messages })
+        dispatch({ type: "SET_TODOS", sessionID, todos })
+      } catch (error) {
+        if (!signal.aborted) console.error("[streaming] failed to sync session snapshot:", error)
+      }
+    })()
+  }, 250)
+}
+
+function getSessionErrorMessage(error: { name?: string; message?: string; data?: { message?: string } } | undefined) {
+  return error?.data?.message || error?.message || error?.name || "模型执行失败"
+}
+
+function handleEvent(event: StreamEvent, dispatch: ReturnType<typeof useAppDispatch>, context: StreamEventContext) {
   switch (event.type) {
     case "message.updated": {
       const props = event.properties as { sessionID: string; info: Message }
@@ -85,6 +128,41 @@ function handleEvent(event: StreamEvent, dispatch: ReturnType<typeof useAppDispa
         sessionID: props.sessionID,
         status: { sessionID: props.sessionID, state: mapAgentState(state) },
       })
+      break
+    }
+    case "session.idle": {
+      const props = event.properties as { sessionID?: string }
+      if (!props.sessionID) break
+      dispatch({
+        type: "SET_AGENT_STATUS",
+        sessionID: props.sessionID,
+        status: { sessionID: props.sessionID, state: "idle" },
+      })
+      if (props.sessionID === context.getActiveSessionID()) {
+        syncSessionSnapshot(props.sessionID, context.getActiveDirectory(), dispatch, context.signal)
+      }
+      break
+    }
+    case "session.error": {
+      const props = event.properties as {
+        sessionID?: string
+        error?: { name?: string; message?: string; data?: { message?: string } }
+      }
+      if (!props.sessionID) break
+      dispatch({
+        type: "SET_AGENT_STATUS",
+        sessionID: props.sessionID,
+        status: { sessionID: props.sessionID, state: "idle" },
+      })
+      const message: Message = {
+        id: `error-${props.sessionID}-${Date.now()}`,
+        sessionID: props.sessionID,
+        role: "assistant",
+        content: `模型调用失败：${getSessionErrorMessage(props.error)}`,
+        errorKey: `${props.sessionID}:${getSessionErrorMessage(props.error)}`,
+        time: { created: Date.now() },
+      }
+      dispatch({ type: "ADD_MESSAGE", sessionID: props.sessionID, message })
       break
     }
     case "permission.asked": {

@@ -19,7 +19,7 @@ function sessionTitle(session: Session) {
 
 export function AttachSessionDialog({ open, onOpenChange }: AttachSessionDialogProps) {
   const dispatch = useAppDispatch()
-  const { attachedSessionIDs, currentWorkspace, ownedSessionIDs } = useAppState()
+  const { activeSessionID, attachedSessionIDs, currentWorkspace, ownedSessionIDs } = useAppState()
   const visibleIDs = new Set([...attachedSessionIDs, ...ownedSessionIDs])
   const [sessionID, setSessionID] = useState("")
   const [workspace, setWorkspace] = useState(currentWorkspace ?? "")
@@ -35,10 +35,11 @@ export function AttachSessionDialog({ open, onOpenChange }: AttachSessionDialogP
   }, [currentWorkspace, open])
 
   const attach = (session: Session) => {
-    dispatch({ type: "ADD_SESSION", session, owned: false })
-    dispatch({ type: "ATTACH_SESSION", sessionID: session.id })
-    dispatch({ type: "SET_CURRENT_WORKSPACE", workspace: (session.directory ?? workspace.trim()) || null })
-    dispatch({ type: "SET_ACTIVE_SESSION", sessionID: session.id })
+    const routedSession = !session.directory && workspace.trim() ? { ...session, directory: workspace.trim() } : session
+    dispatch({ type: "ADD_SESSION", session: routedSession, owned: false })
+    dispatch({ type: "ATTACH_SESSION", sessionID: routedSession.id })
+    dispatch({ type: "SET_CURRENT_WORKSPACE", workspace: routedSession.directory ?? null })
+    if (!activeSessionID) dispatch({ type: "SET_ACTIVE_SESSION", sessionID: routedSession.id })
     onOpenChange(false)
   }
 

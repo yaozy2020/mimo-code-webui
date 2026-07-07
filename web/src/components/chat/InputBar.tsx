@@ -1,11 +1,11 @@
-import { type ChangeEvent, type KeyboardEvent, useRef, useState } from "react"
-import { Code2, FileText, Globe, ImagePlus, Paperclip, Search, Send, Square, X } from "lucide-react"
+import { type ChangeEvent, type KeyboardEvent, useEffect, useRef, useState } from "react"
+import { Code2, FileText, FileSearch, ImagePlus, Layers, Paperclip, Send, Square, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 import type { PromptPart } from "@/api/message"
 
-export type PromptMode = "build" | "plan" | "web-search" | "multimodal"
+export type PromptMode = "build" | "plan" | "compose"
 
 export interface PendingAttachment extends PromptPart {
   type: "file"
@@ -16,10 +16,14 @@ export interface PendingAttachment extends PromptPart {
   size: number
 }
 
-const slashCommands = ["/plan", "/review", "/explain", "/fix", "/summarize"]
-const referenceHints = ["@workspace", "@file", "@selection", "@terminal"]
 const MAX_ATTACHMENTS = 5
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
+
+const modeConfig: Record<PromptMode, { icon: typeof Code2; label: string; title: string }> = {
+  build: { icon: Code2, label: "构建", title: "读写文件、执行命令" },
+  plan: { icon: FileSearch, label: "规划", title: "只读规划、设计方案" },
+  compose: { icon: Layers, label: "编排", title: "编排多代理工作流" },
+}
 
 interface InputBarProps {
   onSend: (text: string, mode: PromptMode, attachments: PendingAttachment[]) => void
@@ -60,11 +64,16 @@ export function InputBar({ onSend, onAbort, busy }: InputBarProps) {
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const trimmed = text.trim()
-  const suggestions = trimmed.startsWith("/") ? slashCommands : trimmed.startsWith("@") ? referenceHints : []
+  const sendLockedRef = useRef(false)
+
+  useEffect(() => {
+    if (!busy) sendLockedRef.current = false
+  }, [busy])
 
   const handleSend = () => {
+    if (busy || sendLockedRef.current) return
     if (!text.trim() && attachments.length === 0) return
+    sendLockedRef.current = true
     onSend(text.trim(), mode, attachments)
     setText("")
     setAttachments([])
@@ -118,137 +127,91 @@ export function InputBar({ onSend, onAbort, busy }: InputBarProps) {
     }
   }
 
+  const placeholder =
+    mode === "plan"
+      ? "先分析和规划，暂不直接改代码..."
+      : mode === "compose"
+        ? "编排多代理工作流..."
+        : "输入指令，让 MiMo 编写、修复或执行任务..."
+
   return (
-    <div className="border-t bg-background/90 p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur sm:p-4">
-      <div className="mx-auto flex max-w-4xl flex-col gap-2 rounded-2xl border bg-background/95 p-2 shadow-lg shadow-black/5">
-        {suggestions.length > 0 && (
-          <div className="grid max-h-32 gap-1 overflow-y-auto rounded-lg border bg-background p-2 text-xs shadow-sm sm:grid-cols-2">
-            {suggestions.map((item) => (
-              <button
-                key={item}
-                type="button"
-                className="rounded-md px-2 py-1.5 text-left hover:bg-muted"
-                onClick={() => {
-                  setText(`${item} `)
-                  textareaRef.current?.focus()
-                }}
-              >
-                {item}
-              </button>
-            ))}
-          </div>
-        )}
+    <div className="border-t bg-muted/30 px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-2 backdrop-blur sm:border-t-0 sm:bg-transparent sm:p-4">
+      <div className="mx-auto flex max-w-4xl flex-col gap-1.5 rounded-2xl border bg-background p-2 shadow-lg shadow-black/5 sm:gap-2 sm:border sm:p-3">
         {attachments.length > 0 && (
-          <div className="flex max-h-24 flex-wrap gap-2 overflow-y-auto rounded-lg border bg-muted/30 p-2 text-xs">
+          <div className="flex max-h-20 flex-wrap gap-1.5 overflow-y-auto px-1">
             {attachments.map((attachment) => (
-              <div key={attachment.id} className="flex max-w-full items-center gap-2 rounded-full border bg-background px-2 py-1">
-                {attachment.mime.startsWith("image/") ? <ImagePlus className="h-3.5 w-3.5" /> : <FileText className="h-3.5 w-3.5" />}
-                <span className="max-w-[52vw] truncate sm:max-w-xs">{attachment.filename}</span>
-                <span className="text-muted-foreground">{Math.max(1, Math.round(attachment.size / 1024))}KB</span>
+              <div key={attachment.id} className="flex max-w-full items-center gap-1.5 rounded-full border bg-muted/50 px-2 py-0.5 text-xs">
+                {attachment.mime.startsWith("image/") ? <ImagePlus className="h-3 w-3" /> : <FileText className="h-3 w-3" />}
+                <span className="max-w-[40vw] truncate sm:max-w-xs">{attachment.filename}</span>
                 <button
                   type="button"
                   onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}
-                  className="rounded hover:bg-background"
-                  title="移除附件"
+                  className="ml-0.5 rounded-full p-0.5 hover:bg-background"
+                  title="移除"
                 >
-                  <X className="h-3 w-3" />
+                  <X className="h-2.5 w-2.5" />
                 </button>
               </div>
             ))}
           </div>
         )}
-        {attachmentError && <p className="px-1 text-xs text-destructive">附件读取失败：{attachmentError}</p>}
-        <Textarea
-          ref={textareaRef}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder={
-            mode === "web-search"
-              ? "联网搜索并总结..."
-              : mode === "plan"
-                ? "先分析和规划，暂不直接改代码..."
-              : mode === "multimodal"
-                  ? "描述图片、视频或多模态问题..."
-                  : "让 MiMo Code 编写、修复或执行任务。输入 / 使用命令，输入 @ 引用上下文..."
-          }
-          className="min-h-[64px] resize-none border-0 bg-transparent text-sm focus-visible:ring-0 focus-visible:ring-offset-0 sm:min-h-[88px]"
-          disabled={busy}
-        />
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex min-w-0 items-center gap-1 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0">
-            <Button
+        {attachmentError && <p className="px-1 text-xs text-destructive">{attachmentError}</p>}
+        <div className="flex items-end gap-1.5 sm:gap-2">
+          <div className="flex shrink-0 items-center gap-0.5 pb-0.5 pl-0.5 sm:pl-0">
+            {(["build", "plan", "compose"] as const).map((m) => {
+              const cfg = modeConfig[m]
+              const Icon = cfg.icon
+              return (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setMode(m)}
+                  title={cfg.title}
+                  className={cn(
+                    "flex h-7 items-center gap-1 rounded-full px-1.5 text-xs transition-colors sm:h-8 sm:px-2.5",
+                    mode === m ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:bg-muted",
+                  )}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">{cfg.label}</span>
+                </button>
+              )
+            })}
+            <button
               type="button"
-              size="sm"
-              variant={mode === "build" ? "secondary" : "ghost"}
-              onClick={() => setMode("build")}
-              className="h-8 shrink-0 gap-1 rounded-full px-2 text-xs"
-              title="构建"
-            >
-              <Code2 className="h-3.5 w-3.5" />
-              <span className={cn(mode === "build" ? "inline" : "hidden sm:inline")}>构建</span>
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant={mode === "plan" ? "secondary" : "ghost"}
-              onClick={() => setMode("plan")}
-              className="h-8 shrink-0 gap-1 rounded-full px-2 text-xs"
-              title="规划"
-            >
-              <Search className="h-3.5 w-3.5" />
-              <span className={cn(mode === "plan" ? "inline" : "hidden sm:inline")}>规划</span>
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant={mode === "web-search" ? "secondary" : "ghost"}
-              onClick={() => setMode("web-search")}
-              className="h-8 shrink-0 gap-1 rounded-full px-2 text-xs"
-              title="联网"
-            >
-              <Globe className="h-3.5 w-3.5" />
-              <span className={cn(mode === "web-search" ? "inline" : "hidden sm:inline")}>联网</span>
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant={mode === "multimodal" ? "secondary" : "ghost"}
-              onClick={() => setMode("multimodal")}
-              className="h-8 shrink-0 gap-1 rounded-full px-2 text-xs"
-              title="多模态"
-            >
-              <ImagePlus className="h-3.5 w-3.5" />
-              <span className={cn(mode === "multimodal" ? "inline" : "hidden sm:inline")}>多模态</span>
-            </Button>
-            <Button
-              type="button"
-              size="icon"
-              variant="ghost"
-              className="h-8 w-8 shrink-0 rounded-full"
               title="添加附件"
               disabled={busy}
               onClick={() => fileInputRef.current?.click()}
+              className="flex h-7 items-center rounded-full px-1.5 text-muted-foreground hover:bg-muted sm:h-8 sm:px-2"
             >
-              <Paperclip className="h-4 w-4" />
-            </Button>
+              <Paperclip className="h-3.5 w-3.5" />
+            </button>
             <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileChange} />
           </div>
-          <div className="flex justify-end">
-          {busy ? (
-            <Button size="icon" variant="destructive" onClick={onAbort} className="h-9 w-9 rounded-full">
-              <Square className="h-4 w-4" />
-            </Button>
-          ) : (
-            <Button
-              size="icon"
-              onClick={handleSend}
-              disabled={!text.trim() && attachments.length === 0}
-              className={cn("h-9 w-9 rounded-full", mode === "web-search" && "bg-blue-600 hover:bg-blue-700")}
-            >
-              <Send className="h-4 w-4" />
-            </Button>
-          )}
+          <Textarea
+            ref={textareaRef}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={placeholder}
+            className="min-h-[56px] max-h-[40vh] flex-1 resize-none border-0 bg-transparent py-1 text-sm leading-relaxed focus-visible:ring-0 focus-visible:ring-offset-0 sm:min-h-[72px]"
+            disabled={busy}
+          />
+          <div className="shrink-0 pb-0.5 sm:pb-1">
+            {busy ? (
+              <Button size="icon" variant="destructive" onClick={onAbort} className="h-8 w-8 rounded-full sm:h-9 sm:w-9">
+                <Square className="h-4 w-4" />
+              </Button>
+            ) : (
+              <Button
+                size="icon"
+                onClick={handleSend}
+                disabled={!text.trim() && attachments.length === 0}
+                className="h-8 w-8 rounded-full sm:h-9 sm:w-9"
+              >
+                <Send className="h-4 w-4" />
+              </Button>
+            )}
           </div>
         </div>
       </div>

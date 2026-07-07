@@ -50,8 +50,22 @@ export function createEventStream(
   directory?: string,
 ) {
   let cancelled = false
+  let retryDelay = 1000
 
-  const run = async () => {
+  const waitForRetry = (ms: number) =>
+    new Promise<void>((resolve) => {
+      const timeout = window.setTimeout(resolve, ms)
+      signal.addEventListener(
+        "abort",
+        () => {
+          window.clearTimeout(timeout)
+          resolve()
+        },
+        { once: true },
+      )
+    })
+
+  const connect = async () => {
     try {
       const eventPath = directory ? `/global/event?directory=${encodeURIComponent(directory)}` : "/global/event"
       const response = await fetch(`${API_BASE}${eventPath}`, {
@@ -61,18 +75,20 @@ export function createEventStream(
 
       if (response.status === 401) {
         onError?.(new AuthRequiredError("Authentication required"))
-        return
+        return false
       }
 
       if (!response.ok) {
         onError?.(new Error(`HTTP ${response.status}`))
-        return
+        return true
       }
+
+      retryDelay = 1000
 
       const reader = response.body?.getReader()
       if (!reader) {
         onError?.(new Error("No response body"))
-        return
+        return true
       }
 
       const decoder = new TextDecoder()
@@ -101,10 +117,21 @@ export function createEventStream(
           }
         }
       }
+      return !cancelled && !signal.aborted
     } catch (error) {
       if (!cancelled) {
         onError?.(error instanceof Error ? error : new Error(String(error)))
       }
+      return !cancelled && !signal.aborted
+    }
+  }
+
+  const run = async () => {
+    while (!cancelled && !signal.aborted) {
+      const shouldRetry = await connect()
+      if (!shouldRetry || cancelled || signal.aborted) break
+      await waitForRetry(retryDelay)
+      retryDelay = Math.min(retryDelay * 2, 10_000)
     }
   }
 
@@ -126,7 +153,7 @@ export async function fetchStatus(): Promise<Record<string, unknown>> {
 }
 
 interface RuntimeModelConfig {
-  provider?: Record<string, { models?: Record<string, { name?: string }> }>
+  provider?: Record<string, { models?: Record<string, { name?: string; limit?: { context?: number } }> }>
 }
 
 export interface RuntimeModel {
@@ -134,6 +161,7 @@ export interface RuntimeModel {
   name: string
   provider: string
   baseUrl?: string
+  contextLimit?: number
   source?: "template" | "runtime" | "backend" | "browser"
 }
 
@@ -144,7 +172,8 @@ export async function fetchRuntimeModels(): Promise<RuntimeModel[]> {
       id,
       name: model.name ?? id,
       provider,
-      source: "runtime",
+      contextLimit: model.limit?.context,
+      source: "runtime" as const,
     })),
   )
 }
@@ -226,7 +255,12 @@ export async function fetchAvailableModels(): Promise<RuntimeModel[]> {
   const byKey = new Map<string, RuntimeModel>()
   for (const model of models) {
     const key = `${model.provider}/${model.id}`
-    if (!byKey.has(key)) byKey.set(key, model)
+    const existing = byKey.get(key)
+    if (!existing) {
+      byKey.set(key, model)
+    } else if (!existing.contextLimit && model.contextLimit) {
+      byKey.set(key, { ...existing, contextLimit: model.contextLimit })
+    }
   }
   return [...byKey.values()]
 }
@@ -271,4 +305,59 @@ export async function runLocalPrompt(input: { model: string; prompt: string }): 
     throw new Error(data.error || `HTTP ${response.status}`)
   }
   return response.json() as Promise<{ text: string }>
+}
+
+export interface LocalPromptStreamHandlers {
+  onStart?: () => void
+  onDelta: (text: string) => void
+  onError?: (message: string) => void
+  onDone?: () => void
+}
+
+export async function runLocalPromptStream(
+  input: { model: string; prompt: string },
+  handlers: LocalPromptStreamHandlers,
+) {
+  const response = await fetch("/local-run/stream", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify(input),
+  })
+  if (!response.ok) {
+    const data = (await response.json().catch(() => ({}))) as { error?: string }
+    throw new Error(data.error || `HTTP ${response.status}`)
+  }
+
+  const reader = response.body?.getReader()
+  if (!reader) throw new Error("No stream body")
+  const decoder = new TextDecoder()
+  let buffer = ""
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split("\n")
+    buffer = lines.pop() ?? ""
+
+    for (const raw of lines) {
+      const line = raw.trim()
+      if (!line.startsWith("data:")) continue
+      const data = line.slice(5).trim()
+      if (!data) continue
+
+      const event = JSON.parse(data) as { type?: string; text?: string; error?: string }
+      if (event.type === "start") handlers.onStart?.()
+      if (event.type === "delta" && event.text) handlers.onDelta(event.text)
+      if (event.type === "error") {
+        handlers.onError?.(event.error || "模型调用失败")
+        throw new Error(event.error || "模型调用失败")
+      }
+      if (event.type === "done") handlers.onDone?.()
+    }
+  }
 }

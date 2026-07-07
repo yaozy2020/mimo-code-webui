@@ -29,6 +29,7 @@ interface AppState {
   }
   agentStatus: Record<string, AgentStatus>
   contextUsage: Record<string, ContextUsage>
+  modelLimits: Record<string, number>
   gitStatus: GitStatus
   todos: Record<string, TodoItem[]>
   sessionDiffs: Record<string, SnapshotFileDiff[]>
@@ -164,6 +165,7 @@ type AppAction =
   | { type: "SET_STATUS"; status: AppState["status"] }
   | { type: "SET_AGENT_STATUS"; sessionID: string; status: AgentStatus }
   | { type: "SET_CONTEXT_USAGE"; sessionID: string; usage: ContextUsage }
+  | { type: "SET_MODEL_LIMITS"; limits: Record<string, number> }
   | { type: "SET_GIT_STATUS"; status: GitStatus }
   | { type: "SET_TODOS"; sessionID: string; todos: TodoItem[] }
   | { type: "SET_SESSION_DIFF"; sessionID: string; diff: SnapshotFileDiff[] }
@@ -194,6 +196,7 @@ const initialState: AppState = {
   },
   agentStatus: {},
   contextUsage: {},
+  modelLimits: {},
   gitStatus: { added: 0, modified: 0, deleted: 0 },
   todos: {},
   sessionDiffs: {},
@@ -213,17 +216,112 @@ const initialState: AppState = {
 }
 
 function messageSignature(message: Message) {
-  return `${message.role}:${message.content ?? ""}`
+  return `${message.role}:${(message.content ?? "").trim().replace(/\s+/g, " ")}`
+}
+
+function hasServerMessageForRole(messages: Message[], role: Message["role"]) {
+  return messages.some((message) => message.role === role && !message.optimistic)
+}
+
+function isDuplicateUserMessage(a: Message, b: Message) {
+  if (a.role !== "user" || b.role !== "user") return false
+  if (messageSignature(a) !== messageSignature(b)) return false
+  const aTime = a.time?.created ?? 0
+  const bTime = b.time?.created ?? 0
+  return a.optimistic || b.optimistic || (aTime > 0 && bTime > 0 && Math.abs(aTime - bTime) < 10_000)
+}
+
+function mergeDuplicateUserMessage(current: Message, next: Message) {
+  const preferred = current.optimistic && !next.optimistic ? next : current
+  const fallback = preferred === current ? next : current
+  return {
+    ...fallback,
+    ...preferred,
+    content: preferred.content ?? fallback.content,
+    parts: preferred.parts ?? fallback.parts,
+    optimistic: preferred.optimistic && fallback.optimistic,
+  }
+}
+
+function mergeMessage(current: Message | undefined, next: Message) {
+  if (!current) return next
+  const currentContent = current.content ?? ""
+  const nextContent = next.content ?? ""
+  const keepLongerAssistantContent =
+    current.role === "assistant" && next.role === "assistant" && currentContent.length > nextContent.length
+
+  return {
+    ...current,
+    ...next,
+    content: keepLongerAssistantContent ? current.content : next.content,
+    parts: keepLongerAssistantContent ? current.parts : (next.parts ?? current.parts),
+  }
+}
+
+function normalizeMessages(messages: Message[]) {
+  return messages.reduce<Message[]>((result, message) => {
+    const previous = result[result.length - 1]
+    if (previous && isDuplicateUserMessage(previous, message)) {
+      result[result.length - 1] = mergeDuplicateUserMessage(previous, message)
+      return result
+    }
+    return [...result, message]
+  }, [])
+}
+
+function contextUsageFromMessage(message: Message, modelLimits: Record<string, number>): ContextUsage | null {
+  if (!message.tokens?.total) return null
+  const limitKey = message.providerID && message.modelID ? `${message.providerID}/${message.modelID}` : undefined
+  const totalTokens = limitKey ? modelLimits[limitKey] : undefined
+  return {
+    usedTokens: message.tokens.total,
+    totalTokens,
+    inputTokens: message.tokens.input,
+    outputTokens: message.tokens.output,
+  }
+}
+
+function contextUsageFromMessages(messages: Message[], modelLimits: Record<string, number>): ContextUsage | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const usage = contextUsageFromMessage(messages[index], modelLimits)
+    if (usage) return usage
+  }
+  return null
+}
+
+function mergeSessionWithExisting(session: Session, existing: Session | undefined) {
+  return existing?.directory && !session.directory ? { ...session, directory: existing.directory } : session
+}
+
+function messagesEqual(a: Message[], b: Message[]) {
+  if (a.length !== b.length) return false
+  return a.every((message, index) => {
+    const other = b[index]
+    return (
+      other &&
+      message.id === other.id &&
+      message.role === other.role &&
+      message.content === other.content &&
+      message.thinking === other.thinking &&
+      message.optimistic === other.optimistic &&
+      message.parts?.length === other.parts?.length
+    )
+  })
 }
 
 function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
-    case "SET_SESSIONS":
-      setCachedSessions([...action.sessions, ...state.sessions])
+    case "SET_SESSIONS": {
+      const mergedSessions = [
+        ...action.sessions.map((session) => mergeSessionWithExisting(session, state.sessions.find((item) => item.id === session.id))),
+        ...state.sessions.filter((session) => !action.sessions.some((item) => item.id === session.id)),
+      ]
+      setCachedSessions(mergedSessions)
       return {
         ...state,
-        sessions: [...action.sessions, ...state.sessions.filter((session) => !action.sessions.some((item) => item.id === session.id))],
+        sessions: mergedSessions,
       }
+    }
     case "ADD_SESSION": {
       if (action.owned !== false) rememberOwnedSessionID(action.session.id)
       upsertCachedSession(action.session)
@@ -279,24 +377,62 @@ function appReducer(state: AppState, action: AppAction): AppState {
       }
     case "SET_MESSAGES": {
       const existing = state.messages[action.sessionID] || []
-      const loadedIds = new Set(action.messages.map((message) => message.id))
-      const loadedSignatures = new Set(action.messages.map(messageSignature))
+      const existingById = new Map(existing.map((message) => [message.id, message]))
+      const loadedMessages = action.messages.map((message) => mergeMessage(existingById.get(message.id), message))
+      const loadedIds = new Set(loadedMessages.map((message) => message.id))
+      const loadedSignatures = new Set(loadedMessages.map(messageSignature))
       const optimisticMessages = existing.filter(
-        (message) => !loadedIds.has(message.id) && !loadedSignatures.has(messageSignature(message)),
+        (message) =>
+          !loadedIds.has(message.id) &&
+          !loadedSignatures.has(messageSignature(message)) &&
+          !(message.optimistic && hasServerMessageForRole(loadedMessages, message.role)),
       )
-      return { ...state, messages: { ...state.messages, [action.sessionID]: [...action.messages, ...optimisticMessages] } }
+      const nextMessages = normalizeMessages([...loadedMessages, ...optimisticMessages])
+      if (messagesEqual(existing, nextMessages)) return state
+      const usage = contextUsageFromMessages(nextMessages, state.modelLimits)
+      return {
+        ...state,
+        messages: { ...state.messages, [action.sessionID]: nextMessages },
+        contextUsage: usage ? { ...state.contextUsage, [action.sessionID]: usage } : state.contextUsage,
+      }
     }
     case "ADD_MESSAGE": {
       const existing = state.messages[action.sessionID] || []
       const exists = existing.some((message) => message.id === action.message.id)
+      const sameErrorIndex = action.message.errorKey
+        ? existing.findIndex((message) => message.errorKey === action.message.errorKey)
+        : -1
+      const sameSignatureIndex = existing.findIndex((message) => messageSignature(message) === messageSignature(action.message))
+      const optimisticIndex = !action.message.optimistic
+        ? existing.findIndex((message) => message.optimistic && message.role === action.message.role)
+        : -1
+      const nextMessages = exists
+        ? existing.map((message) => (message.id === action.message.id ? mergeMessage(message, action.message) : message))
+        : sameErrorIndex >= 0
+          ? existing.map((message, index) => (index === sameErrorIndex ? mergeMessage(message, action.message) : message))
+        : sameSignatureIndex >= 0
+          ? existing.map((message, index) => (index === sameSignatureIndex ? mergeMessage(message, action.message) : message))
+          : optimisticIndex >= 0
+            ? existing.map((message, index) =>
+                index === optimisticIndex
+                  ? {
+                      ...message,
+                      ...action.message,
+                      content: action.message.content ?? message.content,
+                      parts: action.message.parts ?? message.parts,
+                      optimistic: false,
+                    }
+                  : message,
+              )
+          : [...existing, action.message]
+      const usage = contextUsageFromMessage(action.message, state.modelLimits)
       return {
         ...state,
         messages: {
           ...state.messages,
-          [action.sessionID]: exists
-            ? existing.map((message) => (message.id === action.message.id ? { ...message, ...action.message } : message))
-            : [...existing, action.message],
+          [action.sessionID]: normalizeMessages(nextMessages),
         },
+        contextUsage: usage ? { ...state.contextUsage, [action.sessionID]: usage } : state.contextUsage,
       }
     }
     case "UPDATE_MESSAGE": {
@@ -337,8 +473,13 @@ function appReducer(state: AppState, action: AppAction): AppState {
     case "SET_MESSAGE_CONTENT": {
       const msgs = state.messages[action.sessionID] || []
       const exists = msgs.some((m) => m.id === action.messageID)
+      if (exists && msgs.some((m) => m.id === action.messageID && m.content === action.content)) return state
       const nextMessages = exists
-        ? msgs.map((m) => (m.id === action.messageID ? { ...m, content: action.content } : m))
+        ? msgs.map((m) => {
+            if (m.id !== action.messageID) return m
+            const currentContent = m.content ?? ""
+            return m.role === "assistant" && currentContent.length > action.content.length ? m : { ...m, content: action.content }
+          })
         : [
             ...msgs,
             {
@@ -363,6 +504,14 @@ function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, agentStatus: { ...state.agentStatus, [action.sessionID]: action.status } }
     case "SET_CONTEXT_USAGE":
       return { ...state, contextUsage: { ...state.contextUsage, [action.sessionID]: action.usage } }
+    case "SET_MODEL_LIMITS": {
+      const nextContextUsage = { ...state.contextUsage }
+      for (const [sessionID, sessionMessages] of Object.entries(state.messages)) {
+        const usage = contextUsageFromMessages(sessionMessages, action.limits)
+        if (usage) nextContextUsage[sessionID] = usage
+      }
+      return { ...state, modelLimits: action.limits, contextUsage: nextContextUsage }
+    }
     case "SET_GIT_STATUS":
       return { ...state, gitStatus: action.status }
     case "SET_TODOS":
