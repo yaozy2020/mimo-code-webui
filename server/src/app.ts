@@ -11,6 +11,8 @@ import { validateWorkspaceDirectory } from "./workspacePolicy.js"
 type MimoInfo = { url: string; port: number; pid: number }
 type HandlerResult<T> = T | Promise<T>
 const MAX_LOCAL_PROMPT_LENGTH = 50000
+const JSON_BODY_LIMIT = "256kb"
+const DEFAULT_RATE_LIMIT = { windowMs: 60_000, max: 120 }
 
 export interface AppOptions {
   authToken?: string
@@ -33,9 +35,52 @@ export interface AppOptions {
   streamOpenAICompatible: (input: OpenAIStreamInput, handlers: OpenAIStreamHandlers) => Promise<void>
   proxy?: express.RequestHandler
   webDist?: string
+  rateLimit?: { windowMs: number; max: number }
+}
+
+function publicError(message: string) {
+  return { error: message }
+}
+
+function logRouteError(context: string, error: unknown) {
+  console.error(`[app] ${context}:`, error instanceof Error ? error.message : error)
+}
+
+function createRateLimitMiddleware(input?: { windowMs: number; max: number }) {
+  const { windowMs, max } = input ?? DEFAULT_RATE_LIMIT
+  const buckets = new Map<string, { count: number; resetAt: number }>()
+
+  return (req: Request, res: Response, next: NextFunction) => {
+    const now = Date.now()
+    const key = `${req.ip}:${req.method}:${req.path}`
+    const current = buckets.get(key)
+    if (!current || current.resetAt <= now) {
+      buckets.set(key, { count: 1, resetAt: now + windowMs })
+      next()
+      return
+    }
+
+    current.count += 1
+    if (current.count > max) {
+      res.setHeader("Retry-After", String(Math.ceil((current.resetAt - now) / 1000)))
+      res.status(429).json(publicError("Too many requests"))
+      return
+    }
+
+    next()
+  }
+}
+
+function handleJsonParseError(error: unknown, _req: Request, res: Response, next: NextFunction) {
+  if (typeof error === "object" && error !== null && "type" in error && error.type === "entity.too.large") {
+    res.status(413).json(publicError("request body is too large"))
+    return
+  }
+  next(error)
 }
 
 function createAuthMiddleware(authToken?: string) {
+  const expectedHash = authToken ? crypto.createHash("sha256").update(authToken).digest() : null
   return (req: Request, res: Response, next: NextFunction) => {
     if (!authToken) return next()
 
@@ -45,7 +90,8 @@ function createAuthMiddleware(authToken?: string) {
     }
 
     const token = auth.slice(7)
-    if (token.length !== authToken.length || !crypto.timingSafeEqual(Buffer.from(token), Buffer.from(authToken))) {
+    const tokenHash = crypto.createHash("sha256").update(token).digest()
+    if (!expectedHash || !crypto.timingSafeEqual(tokenHash, expectedHash)) {
       return res.status(401).json({ error: "Invalid token", authRequired: true })
     }
 
@@ -56,12 +102,14 @@ function createAuthMiddleware(authToken?: string) {
 export function createApp(options: AppOptions) {
   const app = express()
   const authMiddleware = createAuthMiddleware(options.authToken)
+  const rateLimitMiddleware = createRateLimitMiddleware(options.rateLimit)
 
   app.use(cors({ origin: false }))
   app.use((req, res, next) => {
     if (req.path.startsWith("/api")) return next()
-    express.json()(req, res, next)
+    express.json({ limit: JSON_BODY_LIMIT })(req, res, next)
   })
+  app.use(handleJsonParseError)
 
   const createDetailedStatus = async (req: Request) => {
     const health = await options.checkHealth(options.mimoInfo.url)
@@ -98,6 +146,9 @@ export function createApp(options: AppOptions) {
 
   app.use("/local-config", authMiddleware)
   app.use("/local-run", authMiddleware)
+  app.use("/local-status", rateLimitMiddleware)
+  app.use("/local-config", rateLimitMiddleware)
+  app.use("/local-run", rateLimitMiddleware)
   app.get("/local-config/models", (_req, res) => {
     res.json({ models: options.listManualModels() })
   })
@@ -109,7 +160,8 @@ export function createApp(options: AppOptions) {
       const model = options.addMimoModelConfig(req.body as ManualModelInput)
       res.json({ model })
     } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : String(error) })
+      logRouteError("failed to save model config", error)
+      res.status(400).json(publicError("Invalid model configuration"))
     }
   })
   app.post("/local-config/native-model-probe", async (req, res) => {
@@ -121,7 +173,8 @@ export function createApp(options: AppOptions) {
       }
       res.json(await options.probeNativeModel({ baseUrl: options.mimoInfo.url, model }))
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : String(error) })
+      logRouteError("failed to probe native model", error)
+      res.status(500).json(publicError("Failed to probe native model"))
     }
   })
   app.post("/local-config/restart-mimo", async (_req, res) => {
@@ -133,7 +186,8 @@ export function createApp(options: AppOptions) {
       }
       res.json({ ok: true, url: result.url })
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : String(error) })
+      logRouteError("failed to restart mimo serve", error)
+      res.status(500).json(publicError("Failed to restart mimo serve"))
     }
   })
   app.post("/local-run", async (req, res) => {
@@ -149,7 +203,8 @@ export function createApp(options: AppOptions) {
       }
       res.json(await options.runMimoPrompt({ model, prompt }))
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : String(error) })
+      logRouteError("local run failed", error)
+      res.status(500).json(publicError("Local run failed"))
     }
   })
   app.post("/local-run/stream", async (req, res) => {
@@ -186,7 +241,10 @@ export function createApp(options: AppOptions) {
         },
       )
     } catch (error) {
-      if (!abort.signal.aborted) send({ type: "error", error: error instanceof Error ? error.message : String(error) })
+      if (!abort.signal.aborted) {
+        logRouteError("local stream failed", error)
+        send({ type: "error", error: "Local stream failed" })
+      }
     } finally {
       clearTimeout(timeout)
       res.end()
@@ -200,6 +258,7 @@ export function createApp(options: AppOptions) {
 
   if (options.proxy) {
     app.use("/api", authMiddleware)
+    app.use("/api", rateLimitMiddleware)
     app.use("/api", (req, res, next) => {
       const directory = req.query.directory
       if (typeof directory !== "string" || !directory.trim()) return next()
@@ -207,7 +266,8 @@ export function createApp(options: AppOptions) {
         validateWorkspaceDirectory(directory.trim(), options.workspaceRoot)
         next()
       } catch (error) {
-        res.status(400).json({ error: error instanceof Error ? error.message : String(error) })
+        logRouteError("invalid workspace directory", error)
+        res.status(400).json(publicError("Invalid workspace directory"))
       }
     })
     app.use("/api", options.proxy)

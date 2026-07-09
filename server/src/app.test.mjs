@@ -27,7 +27,7 @@ const { server, url } = await listen(
     listManualModels: () => [],
     listBuiltinModels: async () => [],
     addMimoModelConfig: () => {
-      throw new Error("baseUrl must use https")
+      throw new Error("config write failed at /home/user/.config/mimocode/config.json")
     },
     probeNativeModel: async () => ({ supported: true }),
     restartMimo: async () => ({ ok: true, url: "http://127.0.0.1:4096" }),
@@ -38,6 +38,7 @@ const { server, url } = await listen(
       handlers.onDone?.()
     },
     proxy: (_req, res) => res.json({ ok: true }),
+    rateLimit: { windowMs: 60_000, max: 100 },
   }),
 )
 
@@ -92,7 +93,86 @@ try {
     body: JSON.stringify({ providerID: "metadata", modelID: "probe", baseUrl: "http://169.254.169.254/latest/meta-data" }),
   })
   assert.equal(unsafeModel.status, 400)
-  assert.match(await unsafeModel.text(), /baseUrl must use https/i)
+  const unsafeModelText = await unsafeModel.text()
+  assert.match(unsafeModelText, /Invalid model configuration/i)
+  assert.equal(unsafeModelText.includes("/home/user"), false, "error responses should not expose server paths")
+
+  const invalidRestartServer = await listen(
+    createApp({
+      authToken: "secret-token",
+      host: "127.0.0.1",
+      port: 0,
+      workspaceRoot: "/tmp",
+      mimoInfo: { url: "http://127.0.0.1:4096", port: 4096, pid: 0 },
+      isMimoManaged: () => false,
+      checkHealth: async () => ({ healthy: true, version: "test" }),
+      getMimoPathInfo: async () => null,
+      listManagedMimoServers: () => [],
+      readMimoConfig: () => ({}),
+      listManualModels: () => [],
+      listBuiltinModels: async () => [],
+      addMimoModelConfig: () => ({}),
+      probeNativeModel: async () => ({ supported: true }),
+      restartMimo: async () => {
+        throw new Error("spawn failed at /usr/local/bin/mimo")
+      },
+      runMimoPrompt: async () => ({ text: "ok" }),
+      resolveOpenAICompatibleModel: () => ({ providerID: "safe", modelID: "model", baseUrl: "https://api.example.com/v1" }),
+      streamOpenAICompatible: async (_input, handlers) => handlers.onDone?.(),
+      rateLimit: { windowMs: 60_000, max: 100 },
+    }),
+  )
+  try {
+    const leakedError = await fetch(`${invalidRestartServer.url}/local-config/restart-mimo`, {
+      method: "POST",
+      headers: { Authorization: "Bearer secret-token" },
+    })
+    assert.equal(leakedError.status, 500)
+    const leakedErrorText = await leakedError.text()
+    assert.match(leakedErrorText, /Failed to restart mimo serve/i)
+    assert.equal(leakedErrorText.includes("/usr/local/bin"), false, "500 errors should not expose process paths")
+  } finally {
+    await new Promise((resolve) => invalidRestartServer.server.close(resolve))
+  }
+
+  const rateLimitedServer = await listen(
+    createApp({
+      authToken: "secret-token",
+      host: "127.0.0.1",
+      port: 0,
+      workspaceRoot: "/tmp",
+      mimoInfo: { url: "http://127.0.0.1:4096", port: 4096, pid: 0 },
+      isMimoManaged: () => false,
+      checkHealth: async () => ({ healthy: true, version: "test" }),
+      getMimoPathInfo: async () => null,
+      listManagedMimoServers: () => [],
+      readMimoConfig: () => ({}),
+      listManualModels: () => [],
+      listBuiltinModels: async () => [],
+      addMimoModelConfig: () => ({}),
+      probeNativeModel: async () => ({ supported: true }),
+      restartMimo: async () => ({ ok: true }),
+      runMimoPrompt: async () => ({ text: "ok" }),
+      resolveOpenAICompatibleModel: () => ({ providerID: "safe", modelID: "model", baseUrl: "https://api.example.com/v1" }),
+      streamOpenAICompatible: async (_input, handlers) => handlers.onDone?.(),
+      rateLimit: { windowMs: 60_000, max: 2 },
+    }),
+  )
+  try {
+    const headers = { "Content-Type": "application/json", Authorization: "Bearer secret-token" }
+    assert.equal((await fetch(`${rateLimitedServer.url}/local-run`, { method: "POST", headers, body: JSON.stringify({ model: "safe/model", prompt: "one" }) })).status, 200)
+    assert.equal((await fetch(`${rateLimitedServer.url}/local-run`, { method: "POST", headers, body: JSON.stringify({ model: "safe/model", prompt: "two" }) })).status, 200)
+    assert.equal((await fetch(`${rateLimitedServer.url}/local-run`, { method: "POST", headers, body: JSON.stringify({ model: "safe/model", prompt: "three" }) })).status, 429)
+  } finally {
+    await new Promise((resolve) => rateLimitedServer.server.close(resolve))
+  }
+
+  const largeBody = await fetch(`${url}/local-run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: "Bearer secret-token" },
+    body: JSON.stringify({ model: "safe/model", prompt: "x", padding: "y".repeat(300_000) }),
+  })
+  assert.equal(largeBody.status, 413, "JSON parser should reject oversized request bodies")
 
   const outsideWorkspace = await fetch(`${url}/api/session?directory=/`, {
     headers: { Authorization: "Bearer secret-token" },

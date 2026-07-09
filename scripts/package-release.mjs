@@ -16,7 +16,7 @@ function copy(src, dest = src) {
 fs.rmSync(stage, { recursive: true, force: true })
 fs.mkdirSync(stage, { recursive: true })
 
-for (const required of ["web/dist", "server/dist", "package.json", "package-lock.json", "README.md", "docs/deployment.md", "deploy"]) {
+for (const required of ["web/dist", "server/dist", "package.json", "package-lock.json", "README.md", ".env.example", "docs/deployment.md", "deploy"]) {
   if (!fs.existsSync(path.join(root, required))) throw new Error(`Missing required release input: ${required}`)
 }
 
@@ -24,6 +24,7 @@ copy("web/dist")
 copy("server/dist")
 copy("package.json")
 copy("package-lock.json")
+copy(".env.example")
 copy("server/package.json")
 copy("web/package.json")
 copy("scripts/start.sh")

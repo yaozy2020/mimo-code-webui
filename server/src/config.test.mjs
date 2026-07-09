@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { addMimoModelConfig, migrateLegacyMimoConfig, resolveOpenAICompatibleModel } from "./config.ts"
+import { addMimoModelConfig, assertPublicBaseUrlResolution, migrateLegacyMimoConfig, resolveOpenAICompatibleModel } from "./config.ts"
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "mimo-config-test-"))
 const configPath = path.join(tempDir, "config.json")
@@ -71,6 +71,12 @@ try {
   assert.equal(
     addMimoModelConfig({ providerID: "public", modelID: "probe", baseUrl: "https://api.example.com/v1/" }).baseUrl,
     "https://api.example.com/v1",
+  )
+
+  await assert.rejects(
+    () => assertPublicBaseUrlResolution("https://127.0.0.1/v1"),
+    /resolved host is not allowed/i,
+    "runtime URL resolution should reject loopback addresses",
   )
 
   const legacyDir = path.join(tempDir, "legacy")

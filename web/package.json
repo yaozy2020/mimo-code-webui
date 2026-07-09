@@ -12,7 +12,6 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-markdown": "^9.0.1",
-    "dompurify": "^3.0.6",
     "lucide-react": "^0.294.0",
     "tailwindcss-animate": "^1.0.7",
     "class-variance-authority": "^0.7.0",
@@ -20,7 +19,6 @@
     "tailwind-merge": "^2.2.0"
   },
   "devDependencies": {
-    "@types/dompurify": "^3.0.5",
     "@types/react": "^18.2.43",
     "@types/react-dom": "^18.2.17",
     "@vitejs/plugin-react": "^4.2.1",

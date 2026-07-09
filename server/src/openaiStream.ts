@@ -1,3 +1,5 @@
+import { assertPublicBaseUrlResolution } from "./config.js"
+
 export interface OpenAIStreamModel {
   modelID: string
   baseUrl: string
@@ -32,6 +34,7 @@ function extractErrorMessage(value: unknown) {
 export async function streamOpenAICompatible(input: OpenAIStreamInput, handlers: OpenAIStreamHandlers) {
   const headers: Record<string, string> = { "Content-Type": "application/json" }
   if (input.model.apiKey) headers.Authorization = `Bearer ${input.model.apiKey}`
+  await assertPublicBaseUrlResolution(input.model.baseUrl)
 
   const response = await fetch(chatCompletionsUrl(input.model.baseUrl), {
     method: "POST",

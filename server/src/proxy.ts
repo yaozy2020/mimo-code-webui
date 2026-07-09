@@ -2,6 +2,8 @@ import type { NextFunction, Request, Response } from "express"
 import type { Socket } from "node:net"
 import { createProxyMiddleware } from "http-proxy-middleware"
 
+const MAX_ROUTED_PROXIES = 32
+
 export function createMimoProxy(targetUrl: string) {
   return createProxyMiddleware({
     target: targetUrl,
@@ -13,7 +15,7 @@ export function createMimoProxy(targetUrl: string) {
     selfHandleResponse: false,
     on: {
       proxyReq: (proxyReq, req: Request) => {
-        console.log(`[proxy] ${req.method} ${req.path} -> ${targetUrl}${proxyReq.path}`)
+        console.log(`[proxy] ${req.method} ${req.path} -> ${targetUrl}`)
       },
       error: (err, req: Request, res: Response | Socket) => {
         console.error(`[proxy] error on ${req.method} ${req.path}:`, err.message)
@@ -33,6 +35,10 @@ export function createRoutedMimoProxy(resolveTargetUrl: (req: Request) => Promis
       const targetUrl = await resolveTargetUrl(req)
       let proxy = proxies.get(targetUrl)
       if (!proxy) {
+        if (proxies.size >= MAX_ROUTED_PROXIES) {
+          const oldest = proxies.keys().next().value as string | undefined
+          if (oldest) proxies.delete(oldest)
+        }
         proxy = createMimoProxy(targetUrl)
         proxies.set(targetUrl, proxy)
       }

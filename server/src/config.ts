@@ -1,4 +1,5 @@
 import fs from "node:fs"
+import dns from "node:dns/promises"
 import net from "node:net"
 import os from "node:os"
 import path from "node:path"
@@ -128,7 +129,7 @@ function validateConfigID(value: string, field: string): string {
   return trimmed
 }
 
-function isPrivateIPv4(hostname: string): boolean {
+export function isPrivateIPv4(hostname: string): boolean {
   const parts = hostname.split(".").map((part) => Number(part))
   if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false
   const [a, b] = parts
@@ -144,12 +145,12 @@ function isPrivateIPv4(hostname: string): boolean {
   )
 }
 
-function isPrivateIPv6(hostname: string): boolean {
+export function isPrivateIPv6(hostname: string): boolean {
   const normalized = hostname.toLowerCase()
   return normalized === "::1" || normalized.startsWith("fc") || normalized.startsWith("fd") || normalized.startsWith("fe80:")
 }
 
-function validateOpenAIBaseUrl(value: string): string {
+export function validateOpenAIBaseUrl(value: string): string {
   const trimmed = value.trim()
   let url: URL
   try {
@@ -166,6 +167,15 @@ function validateOpenAIBaseUrl(value: string): string {
     throw new Error("baseUrl host is not allowed")
   }
   return trimmed.replace(/\/+$/, "")
+}
+
+export async function assertPublicBaseUrlResolution(baseUrl: string): Promise<void> {
+  const url = new URL(baseUrl)
+  const hostname = url.hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, "")
+  const addresses = await dns.lookup(hostname, { all: true, verbatim: true })
+  if (addresses.some(({ address, family }) => (family === 4 && isPrivateIPv4(address)) || (family === 6 && isPrivateIPv6(address)))) {
+    throw new Error("baseUrl resolved host is not allowed")
+  }
 }
 
 export function listManualModels(): ManualModelSummary[] {

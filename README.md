@@ -32,6 +32,8 @@ Cross-platform web UI for [MiMo-Code](https://github.com/XiaomiMiMo/MiMo-Code).
 
 For long-running Linux server deployment without Docker, see `docs/deployment.md`. It covers release-package installation, systemd, Nginx, Caddy, upgrades, logs, and rollback.
 
+Use `.env.example` as the production environment variable template.
+
 ## Quick Start From Source
 
 ```bash

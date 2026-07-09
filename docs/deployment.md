@@ -62,6 +62,8 @@ EOF
 sudo chmod 640 /etc/mimo-code-webui/webui.env
 ```
 
+The release package also includes `.env.example` with the same variables as a quick reference.
+
 Notes:
 
 - Keep `HOST=127.0.0.1` when using Nginx or Caddy on the same machine.
