@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react"
+import ReactMarkdown from "react-markdown"
 import { ChevronDown, ChevronRight, Copy, FileText, Pencil, Terminal, ListTodo, Check, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { nextStreamingDisplay } from "@/lib/streamingDisplay"
@@ -77,6 +78,48 @@ function toolDetailSummary(part: NonNullable<Message["parts"]>[number]): string 
     }
   }
   return ""
+}
+
+function languageFromClassName(className?: string) {
+  return className?.match(/language-(\w+)/)?.[1]
+}
+
+function AssistantMarkdown({ content }: { content: string }) {
+  return (
+    <div className="assistant-markdown min-w-0 text-[15px] leading-8 text-foreground/90 [overflow-wrap:anywhere]">
+      <ReactMarkdown
+        components={{
+          p: ({ children }) => <p className="my-3 first:mt-0 last:mb-0">{children}</p>,
+          a: ({ children, href }) => (
+            <a className="font-medium text-blue-600 underline decoration-blue-500/30 underline-offset-4 hover:decoration-blue-600 dark:text-blue-400" href={href} target="_blank" rel="noreferrer">
+              {children}
+            </a>
+          ),
+          strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
+          ul: ({ children }) => <ul className="my-3 list-disc space-y-1.5 pl-6 marker:text-muted-foreground/70">{children}</ul>,
+          ol: ({ children }) => <ol className="my-3 list-decimal space-y-2 pl-6 marker:text-muted-foreground">{children}</ol>,
+          li: ({ children }) => <li className="pl-1 leading-8">{children}</li>,
+          blockquote: ({ children }) => (
+            <blockquote className="my-4 border-l-2 border-border pl-4 text-muted-foreground">{children}</blockquote>
+          ),
+          pre: ({ children }) => <pre className="my-4 overflow-x-auto rounded-lg border border-border/70 bg-slate-950/95 p-4 text-[13px] leading-6 text-slate-100 shadow-sm dark:bg-slate-950">{children}</pre>,
+          code: ({ className, children, ...props }) => {
+            const language = languageFromClassName(className)
+            if (!className) {
+              return <code className="rounded-md border border-border/60 bg-muted px-1.5 py-0.5 font-mono text-[0.9em] text-foreground" {...props}>{children}</code>
+            }
+            return (
+              <code className="block min-w-0 whitespace-pre font-mono" data-language={language} {...props}>
+                {children}
+              </code>
+            )
+          },
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  )
 }
 
 function CollapsibleTool({ part }: { part: NonNullable<Message["parts"]>[number] }) {
@@ -240,8 +283,8 @@ export function MessageBubble({ message, onCopy }: MessageBubbleProps) {
         <CollapsibleTool key={part.id} part={part} />
       ))}
       {renderedContent && (
-        <div className="relative whitespace-pre-wrap break-words text-sm leading-relaxed [overflow-wrap:anywhere]">
-          {renderedContent}
+        <div className="relative min-w-0">
+          <AssistantMarkdown content={renderedContent} />
           {onCopy && (
             <Button
               size="icon"
