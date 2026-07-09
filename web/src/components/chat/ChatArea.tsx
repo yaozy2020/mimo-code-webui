@@ -1,248 +1,33 @@
-import { useCallback, useEffect, useState } from "react"
+import { useState } from "react"
 import { Link, Plus } from "lucide-react"
-import { fetchRuntimeModels, runLocalPrompt, runLocalPromptStream } from "@/api/client"
-import { abortSession, modelSelectionToPayload, sendPrompt } from "@/api/message"
-import { getMessages, getSessionDiff, getTodos } from "@/api/session"
 import { Button } from "@/components/ui/button"
 import { FileChangesPanel } from "@/components/files/FileChangesPanel"
-import { createClientID } from "@/lib/utils"
-import { useAppDispatch, useAppState } from "@/stores/appStore"
-import type { Message } from "@/types"
+import { useAppState } from "@/stores/appStore"
 import { AttachSessionDialog } from "./AttachSessionDialog"
-import { InputBar, type PendingAttachment, type PromptMode } from "./InputBar"
+import { InputBar } from "./InputBar"
 import { MessageList } from "./MessageList"
 import { PermissionDialog } from "./PermissionDialog"
 import { PromptToolbar } from "./PromptToolbar"
 import { QuestionDialog } from "./QuestionDialog"
 import { WorkspaceSessionDialog } from "./WorkspaceSessionDialog"
-import { chooseModelRoute } from "./modelRouting"
 import type { SlashAction } from "./slashCommands"
-
-const MESSAGE_REFRESH_INTERVAL_MS = 3000
-function latestUserMessageID(messages: Message[]) {
-  return [...messages].reverse().find((message) => message.role === "user")?.id
-}
+import { useActiveSessionData } from "./useActiveSessionData"
+import { usePromptController } from "./usePromptController"
 
 interface ChatAreaProps {
   onSlashAction?: (action: SlashAction) => void
 }
 
 export function ChatArea({ onSlashAction }: ChatAreaProps) {
-  const dispatch = useAppDispatch()
-  const { activeSessionID, agentStatus, currentWorkspace, messages, sessionDiffs, sessions, settings } = useAppState()
+  const { activeSessionID, currentWorkspace, messages, sessionDiffs, sessions } = useAppState()
   const [workspaceDialogOpen, setWorkspaceDialogOpen] = useState(false)
   const [attachDialogOpen, setAttachDialogOpen] = useState(false)
   const [showFileChanges, setShowFileChanges] = useState(false)
   const activeSession = activeSessionID ? sessions.find((session) => session.id === activeSessionID) : undefined
   const activeDirectory = activeSession?.directory
 
-  const busy = activeSessionID ? agentStatus[activeSessionID]?.state === "busy" : false
-
-  // Load historical messages whenever the active session changes
-  useEffect(() => {
-    if (!activeSessionID) return
-    let cancelled = false
-
-    const load = async () => {
-      try {
-        const msgs = await getMessages(activeSessionID, 50, undefined, activeDirectory)
-        if (cancelled) return
-        dispatch({ type: "SET_MESSAGES", sessionID: activeSessionID, messages: msgs })
-        const messageID = latestUserMessageID(msgs)
-        if (messageID) {
-          const diff = await getSessionDiff(activeSessionID, messageID, activeDirectory)
-          if (!cancelled) dispatch({ type: "SET_SESSION_DIFF", sessionID: activeSessionID, diff })
-        }
-      } catch (error) {
-        console.error("[ChatArea] failed to load messages:", error)
-      }
-    }
-
-    load()
-    return () => {
-      cancelled = true
-    }
-  }, [activeDirectory, activeSessionID, dispatch])
-
-  useEffect(() => {
-    if (!activeSessionID) return
-    let cancelled = false
-
-    const load = async () => {
-      try {
-        const todos = await getTodos(activeSessionID, activeDirectory)
-        if (cancelled) return
-        dispatch({ type: "SET_TODOS", sessionID: activeSessionID, todos })
-      } catch (error) {
-        console.error("[ChatArea] failed to load todos:", error)
-      }
-    }
-
-    load()
-    return () => {
-      cancelled = true
-    }
-  }, [activeDirectory, activeSessionID, dispatch])
-
-  useEffect(() => {
-    if (!activeSessionID) return
-    let cancelled = false
-    const refresh = async () => {
-      if (document.visibilityState !== "visible") return
-      try {
-        const [todos] = await Promise.all([
-          getTodos(activeSessionID, activeDirectory),
-        ])
-        if (!cancelled) {
-          dispatch({ type: "SET_TODOS", sessionID: activeSessionID, todos })
-        }
-        const msgs = await getMessages(activeSessionID, 50, undefined, activeDirectory)
-        if (!cancelled) {
-          const messageID = latestUserMessageID(msgs)
-          if (messageID) {
-            const diff = await getSessionDiff(activeSessionID, messageID, activeDirectory)
-            if (!cancelled) dispatch({ type: "SET_SESSION_DIFF", sessionID: activeSessionID, diff })
-          }
-        }
-      } catch (error) {
-        console.error("[ChatArea] failed to refresh:", error)
-      }
-    }
-
-    const interval = window.setInterval(refresh, MESSAGE_REFRESH_INTERVAL_MS)
-    return () => {
-      cancelled = true
-      window.clearInterval(interval)
-    }
-  }, [activeDirectory, activeSessionID, dispatch])
-
-  const handleSend = useCallback(
-    async (text: string, mode: PromptMode, attachments: PendingAttachment[] = []) => {
-      if (!activeSessionID) return
-      dispatch({
-        type: "SET_AGENT_STATUS",
-        sessionID: activeSessionID,
-        status: { sessionID: activeSessionID, state: "busy" },
-      })
-
-      const promptText = text
-      const attachmentText = attachments
-        .filter((attachment) => typeof attachment.content === "string")
-        .map((attachment) => `附件 ${attachment.filename}:\n${attachment.content}`)
-        .join("\n\n")
-      const promptParts = [
-        ...(promptText ? [{ type: "text" as const, content: promptText }] : []),
-        ...(attachmentText ? [{ type: "text" as const, content: attachmentText }] : []),
-        ...attachments,
-      ]
-
-      const userMessage: Message = {
-        id: createClientID("msg"),
-        sessionID: activeSessionID,
-        role: "user",
-        content: text || attachments.map((attachment) => `附件：${attachment.filename}`).join("\n"),
-        optimistic: true,
-        parts: [
-          ...(text ? [{ id: createClientID("part"), type: "text" as const, content: text }] : []),
-          ...attachments.map((attachment) => ({
-            id: attachment.id ?? createClientID("part"),
-            type: "file" as const,
-            mime: attachment.mime,
-            filename: attachment.filename,
-            url: attachment.url,
-            content: attachment.content,
-          })),
-        ],
-        time: { created: Date.now() },
-      }
-      dispatch({ type: "ADD_MESSAGE", sessionID: activeSessionID, message: userMessage })
-
-      try {
-        const selectedModel = modelSelectionToPayload(settings.model)
-        const runtimeModels = await fetchRuntimeModels()
-        // Only models known by the running mimo serve should use the native route.
-        // Backend/manual models that are not yet in mimo serve's runtime config are
-        // routed through local-run (direct OpenAI-compatible API) so they still work.
-        const nativeKeys = new Set(runtimeModels.map((m) => `${m.provider}/${m.id}`))
-        const route = chooseModelRoute({ selectedModel, nativeModelKeys: nativeKeys })
-
-        if (route === "local-run") {
-          const assistantMessageID = createClientID("msg")
-          dispatch({
-            type: "ADD_MESSAGE",
-            sessionID: activeSessionID,
-            message: {
-              id: assistantMessageID,
-              sessionID: activeSessionID,
-              role: "assistant",
-              content: "",
-              time: { created: Date.now() },
-            },
-          })
-
-          let receivedDelta = false
-          try {
-            await runLocalPromptStream(
-              { model: settings.model, prompt: text || promptParts.map((p) => p.content).join("\n") },
-              {
-                onDelta: (delta) => {
-                  receivedDelta = true
-                  dispatch({ type: "APPEND_MESSAGE_CONTENT", sessionID: activeSessionID, messageID: assistantMessageID, content: delta })
-                },
-              },
-            )
-          } catch (streamError) {
-            if (!receivedDelta) {
-              const result = await runLocalPrompt({ model: settings.model, prompt: text || promptParts.map((p) => p.content).join("\n") })
-              dispatch({
-                type: "SET_MESSAGE_CONTENT",
-                sessionID: activeSessionID,
-                messageID: assistantMessageID,
-                content: result.text || "（模型没有返回文本）",
-              })
-            } else {
-              throw streamError
-            }
-          }
-
-          dispatch({
-            type: "SET_AGENT_STATUS",
-            sessionID: activeSessionID,
-            status: { sessionID: activeSessionID, state: "idle" },
-          })
-          return
-        }
-
-        await sendPrompt(activeSessionID, {
-          agent: mode,
-          model: settings.model,
-          parts: promptParts,
-          directory: activeDirectory,
-        })
-      } catch (error) {
-        console.error("[ChatArea] failed to send prompt:", error)
-        dispatch({
-          type: "SET_AGENT_STATUS",
-          sessionID: activeSessionID,
-          status: { sessionID: activeSessionID, state: "idle" },
-        })
-        const errorMessage: Message = {
-          id: createClientID("msg"),
-          sessionID: activeSessionID,
-          role: "assistant",
-          content: `[Error: ${(error as Error).message}]`,
-          time: { created: Date.now() },
-        }
-        dispatch({ type: "ADD_MESSAGE", sessionID: activeSessionID, message: errorMessage })
-      }
-    },
-    [activeDirectory, activeSessionID, busy, dispatch, settings.model, currentWorkspace],
-  )
-
-  const handleAbort = useCallback(async () => {
-    if (!activeSessionID) return
-    await abortSession(activeSessionID, activeDirectory)
-  }, [activeDirectory, activeSessionID])
+  useActiveSessionData({ activeSessionID, activeDirectory })
+  const { busy, handleSend, handleAbort } = usePromptController({ activeSessionID, activeDirectory })
 
   const sessionMessages = activeSessionID ? messages[activeSessionID] || [] : []
 

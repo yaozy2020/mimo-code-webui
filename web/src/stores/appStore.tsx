@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useReducer } from "react"
 import { orderMessages } from "@/lib/messageOrder"
+import { appendMessageContent, setMessageContent } from "./appReducers"
 import type {
   AgentStatus,
   ContextUsage,
@@ -450,60 +451,19 @@ function appReducer(state: AppState, action: AppAction): AppState {
       }
     }
     case "APPEND_MESSAGE_CONTENT": {
-      const msgs = state.messages[action.sessionID] || []
-      const exists = msgs.some((m) => m.id === action.messageID)
-      const nextMessages = exists
-        ? msgs.map((m) => {
-            if (m.id !== action.messageID) return m
-            return { ...m, content: (m.content || "") + action.content }
-          })
-        : [
-            ...msgs,
-            {
-              id: action.messageID,
-              sessionID: action.sessionID,
-              role: "assistant" as const,
-              content: action.content,
-              time: { created: Date.now() },
-            },
-          ]
       return {
         ...state,
-        messages: {
-          ...state.messages,
-          [action.sessionID]: nextMessages,
-        },
+        messages: appendMessageContent(state.messages, action.sessionID, action.messageID, action.content),
       }
     }
     case "SET_MESSAGE_CONTENT": {
       const msgs = state.messages[action.sessionID] || []
-      const exists = msgs.some((m) => m.id === action.messageID)
-      if (exists && msgs.some((m) => m.id === action.messageID && m.content === action.content)) {
+      if (msgs.some((m) => m.id === action.messageID && m.content === action.content)) {
         return state
       }
-      const nextMessages = exists
-        ? msgs.map((m) => {
-            if (m.id !== action.messageID) return m
-            const currentContent = m.content ?? ""
-            const keepCurrent = m.role === "assistant" && currentContent.length > action.content.length
-            return keepCurrent ? m : { ...m, content: action.content }
-          })
-        : [
-            ...msgs,
-            {
-              id: action.messageID,
-              sessionID: action.sessionID,
-              role: "assistant" as const,
-              content: action.content,
-              time: { created: Date.now() },
-            },
-          ]
       return {
         ...state,
-        messages: {
-          ...state.messages,
-          [action.sessionID]: nextMessages,
-        },
+        messages: setMessageContent(state.messages, action.sessionID, action.messageID, action.content),
       }
     }
     case "SET_STATUS":
