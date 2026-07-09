@@ -6,8 +6,66 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 cd "$PROJECT_DIR"
 
-if ! command -v node &> /dev/null; then
-  echo "Error: Node.js is not installed. Please install Node.js 18+ first."
+# Run as the interactive user so WebUI and mimo serve share the same config/state.
+# This requires ACL/write access for the service account; if unavailable, fall
+# back to the project-local .mimo-home directory.
+export HOME="${MIMO_HOME:-/home/yzy}"
+export MIMO_CONFIG_PATH="${MIMO_CONFIG_PATH:-$HOME/.config/mimocode/config.json}"
+# Use the directory that contains the WebUI project as the default workspace root
+# so users can create sessions in sibling directories, not just inside the webui folder.
+export MIMO_WORKSPACE_ROOT="${MIMO_WORKSPACE_ROOT:-$(dirname "$PROJECT_DIR")}"
+# Optionally keep data/state under the project directory when MIMO_HOME is not writable.
+if [ -n "${MIMO_DATA_HOME:-}" ]; then
+  export XDG_DATA_HOME="$MIMO_DATA_HOME"
+  export XDG_STATE_HOME="${MIMO_STATE_HOME:-$MIMO_DATA_HOME/../state}"
+fi
+
+find_node() {
+  # Try the current PATH first
+  if command -v node &> /dev/null; then
+    command -v node
+    return 0
+  fi
+
+  # Common Node.js installation locations
+  local candidates=(
+    "$HOME/.nvm/versions/node/*/bin/node"
+    "$HOME/.fnm/node-versions/*/installation/bin/node"
+    "$HOME/.local/share/fnm/node-versions/*/installation/bin/node"
+    "/var/apps/nodejs_v24/target/bin/node"
+    "/var/apps/nodejs_*/target/bin/node"
+    "/usr/local/bin/node"
+    "/usr/bin/node"
+    "/opt/node/bin/node"
+    "/opt/homebrew/bin/node"
+    "/mnt/data/node/bin/node"
+  )
+
+  for pattern in "${candidates[@]}"; do
+    for path in $pattern; do
+      if [ -x "$path" ]; then
+        echo "$path"
+        return 0
+      fi
+    done
+  done
+
+  return 1
+}
+
+NODE_BIN=$(find_node) || {
+  echo "Error: Node.js is not installed or not in PATH."
+  echo "Please install Node.js 18+ and make sure 'node' is available."
+  exit 1
+}
+
+echo "[start] using Node.js: $NODE_BIN"
+
+# Make npm available for install/build steps when Node is found outside of PATH
+export PATH="$(dirname "$NODE_BIN"):$PATH"
+
+if ! "$NODE_BIN" --version &> /dev/null; then
+  echo "Error: $NODE_BIN is not executable."
   exit 1
 fi
 
@@ -27,4 +85,4 @@ if [ -n "${AUTH_TOKEN:-}" ]; then
 fi
 
 echo "Starting MiMo Code WebUI..."
-exec npm start
+exec "$NODE_BIN" server/dist/index.js

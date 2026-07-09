@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 import { Link, Plus } from "lucide-react"
+import { fetchRuntimeModels, runLocalPrompt, runLocalPromptStream } from "@/api/client"
 import { abortSession, modelSelectionToPayload, sendPrompt } from "@/api/message"
 import { getMessages, getSessionDiff, getTodos } from "@/api/session"
 import { Button } from "@/components/ui/button"
@@ -15,13 +16,18 @@ import { PromptToolbar } from "./PromptToolbar"
 import { QuestionDialog } from "./QuestionDialog"
 import { WorkspaceSessionDialog } from "./WorkspaceSessionDialog"
 import { chooseModelRoute } from "./modelRouting"
+import type { SlashAction } from "./slashCommands"
 
 const MESSAGE_REFRESH_INTERVAL_MS = 3000
 function latestUserMessageID(messages: Message[]) {
   return [...messages].reverse().find((message) => message.role === "user")?.id
 }
 
-export function ChatArea() {
+interface ChatAreaProps {
+  onSlashAction?: (action: SlashAction) => void
+}
+
+export function ChatArea({ onSlashAction }: ChatAreaProps) {
   const dispatch = useAppDispatch()
   const { activeSessionID, agentStatus, currentWorkspace, messages, sessionDiffs, sessions, settings } = useAppState()
   const [workspaceDialogOpen, setWorkspaceDialogOpen] = useState(false)
@@ -153,8 +159,60 @@ export function ChatArea() {
 
       try {
         const selectedModel = modelSelectionToPayload(settings.model)
-        const route = chooseModelRoute({ selectedModel, runtimeModel: false })
-        if (route !== "native") throw new Error(`Unsupported model route: ${route}`)
+        const runtimeModels = await fetchRuntimeModels()
+        // Only models known by the running mimo serve should use the native route.
+        // Backend/manual models that are not yet in mimo serve's runtime config are
+        // routed through local-run (direct OpenAI-compatible API) so they still work.
+        const nativeKeys = new Set(runtimeModels.map((m) => `${m.provider}/${m.id}`))
+        const route = chooseModelRoute({ selectedModel, nativeModelKeys: nativeKeys })
+
+        if (route === "local-run") {
+          const assistantMessageID = createClientID("msg")
+          dispatch({
+            type: "ADD_MESSAGE",
+            sessionID: activeSessionID,
+            message: {
+              id: assistantMessageID,
+              sessionID: activeSessionID,
+              role: "assistant",
+              content: "",
+              time: { created: Date.now() },
+            },
+          })
+
+          let receivedDelta = false
+          try {
+            await runLocalPromptStream(
+              { model: settings.model, prompt: text || promptParts.map((p) => p.content).join("\n") },
+              {
+                onDelta: (delta) => {
+                  receivedDelta = true
+                  dispatch({ type: "APPEND_MESSAGE_CONTENT", sessionID: activeSessionID, messageID: assistantMessageID, content: delta })
+                },
+              },
+            )
+          } catch (streamError) {
+            if (!receivedDelta) {
+              const result = await runLocalPrompt({ model: settings.model, prompt: text || promptParts.map((p) => p.content).join("\n") })
+              dispatch({
+                type: "SET_MESSAGE_CONTENT",
+                sessionID: activeSessionID,
+                messageID: assistantMessageID,
+                content: result.text || "（模型没有返回文本）",
+              })
+            } else {
+              throw streamError
+            }
+          }
+
+          dispatch({
+            type: "SET_AGENT_STATUS",
+            sessionID: activeSessionID,
+            status: { sessionID: activeSessionID, state: "idle" },
+          })
+          return
+        }
+
         await sendPrompt(activeSessionID, {
           agent: mode,
           model: settings.model,
@@ -178,7 +236,7 @@ export function ChatArea() {
         dispatch({ type: "ADD_MESSAGE", sessionID: activeSessionID, message: errorMessage })
       }
     },
-    [activeDirectory, activeSessionID, dispatch, messages, settings.model],
+    [activeDirectory, activeSessionID, busy, dispatch, settings.model, currentWorkspace],
   )
 
   const handleAbort = useCallback(async () => {
@@ -187,6 +245,14 @@ export function ChatArea() {
   }, [activeDirectory, activeSessionID])
 
   const sessionMessages = activeSessionID ? messages[activeSessionID] || [] : []
+
+  const handleSlashAction = (action: SlashAction) => {
+    if (action === "new-session") {
+      setWorkspaceDialogOpen(true)
+      return
+    }
+    onSlashAction?.(action)
+  }
 
   if (!activeSessionID) {
     return (
@@ -215,7 +281,7 @@ export function ChatArea() {
 
   return (
     <div className="flex min-w-0 flex-1 overflow-hidden">
-      <div className="flex min-w-0 flex-1 flex-col bg-background/55">
+      <div className="flex min-w-0 flex-1 flex-col bg-background">
         {activeSessionID && (
           <PromptToolbar sessionID={activeSessionID} onOpenFileChanges={() => setShowFileChanges(true)} />
         )}
@@ -241,7 +307,7 @@ export function ChatArea() {
         {(sessionMessages.length > 0 || busy) && <MessageList />}
         <PermissionDialog />
         <QuestionDialog />
-        <InputBar onSend={handleSend} onAbort={handleAbort} busy={busy} />
+        <InputBar onSend={handleSend} onAbort={handleAbort} onSlashAction={handleSlashAction} busy={busy} />
         <WorkspaceSessionDialog open={workspaceDialogOpen} onOpenChange={setWorkspaceDialogOpen} defaultWorkspace={activeDirectory} />
       </div>
       {activeSessionID && showFileChanges && (sessionDiffs[activeSessionID]?.length ?? 0) > 0 && (

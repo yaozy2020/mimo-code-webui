@@ -12,9 +12,14 @@
     "dev": "concurrently \"npm run dev -w server\" \"npm run dev -w web\"",
     "build": "npm run build -w web && npm run build -w server",
     "start": "npm start -w server",
-    "typecheck": "npm run typecheck -w server && npm run typecheck -w web"
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w web",
+    "verify": "node --import tsx server/src/config.test.mjs && node --import tsx server/src/status.test.mjs && node --import tsx web/src/components/chat/modelRouting.test.mjs && node --import tsx web/src/components/chat/sessionSource.test.mjs && node --import tsx web/src/components/chat/slashCommands.test.mjs && node --import tsx web/src/lib/messageOrder.test.mjs && node --import tsx web/src/lib/streamingDisplay.test.mjs && node --import tsx web/src/lib/time.test.mjs && npm run typecheck && npm run build",
+    "smoke:browser:install": "PLAYWRIGHT_BROWSERS_PATH=.playwright-browsers playwright install chromium",
+    "smoke:browser": "node scripts/browser-smoke.mjs",
+    "smoke:browser:system": "node scripts/system-chromium-smoke.mjs"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "concurrently": "^8.2.2"
   },
   "engines": {

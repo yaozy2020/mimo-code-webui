@@ -6,18 +6,20 @@ import { Dialog, DialogDescription, DialogFooter, DialogHeader, DialogTitle } fr
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useAppDispatch, useAppState } from "@/stores/appStore"
+import { formatActivityTime } from "@/lib/time"
 import type { Session } from "@/types"
 
 interface AttachSessionDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  onSuccess?: () => void
 }
 
 function sessionTitle(session: Session) {
   return session.title && !session.title.startsWith("New session - ") ? session.title : "空会话"
 }
 
-export function AttachSessionDialog({ open, onOpenChange }: AttachSessionDialogProps) {
+export function AttachSessionDialog({ open, onOpenChange, onSuccess }: AttachSessionDialogProps) {
   const dispatch = useAppDispatch()
   const { activeSessionID, attachedSessionIDs, currentWorkspace, ownedSessionIDs } = useAppState()
   const visibleIDs = new Set([...attachedSessionIDs, ...ownedSessionIDs])
@@ -40,6 +42,7 @@ export function AttachSessionDialog({ open, onOpenChange }: AttachSessionDialogP
     dispatch({ type: "ATTACH_SESSION", sessionID: routedSession.id })
     dispatch({ type: "SET_CURRENT_WORKSPACE", workspace: routedSession.directory ?? null })
     if (!activeSessionID) dispatch({ type: "SET_ACTIVE_SESSION", sessionID: routedSession.id })
+    onSuccess?.()
     onOpenChange(false)
   }
 
@@ -88,7 +91,9 @@ export function AttachSessionDialog({ open, onOpenChange }: AttachSessionDialogP
       <div className="grid gap-4">
         <DialogHeader>
           <DialogTitle>接入已有会话</DialogTitle>
-          <DialogDescription>只有明确接入的 MiMo 会话才会出现在 WebUI 侧边栏；跨工作区会话会按原目录路由到对应项目实例。</DialogDescription>
+          <DialogDescription>
+            只有明确接入的 MiMo 会话才会出现在 WebUI 侧边栏；跨工作区会话会按原目录路由到对应项目实例。
+          </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
           <div className="grid gap-2">
@@ -116,7 +121,7 @@ export function AttachSessionDialog({ open, onOpenChange }: AttachSessionDialogP
         </Button>
         {error && <p className="text-sm text-destructive">{error}</p>}
         {discovered.length > 0 && (
-          <div className="max-h-72 overflow-auto rounded-lg border p-2">
+          <div className="max-h-60 overflow-auto rounded-lg border p-2 sm:max-h-72">
             {discovered.map((session) => {
               const visible = visibleIDs.has(session.id)
               return (
@@ -124,6 +129,7 @@ export function AttachSessionDialog({ open, onOpenChange }: AttachSessionDialogP
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium">{sessionTitle(session)}</div>
                     <div className="truncate text-xs text-muted-foreground">{session.id}</div>
+                    <div className="truncate text-xs text-muted-foreground">{formatActivityTime(session.time?.updated ?? session.time?.created)}</div>
                     <div className="truncate text-xs text-muted-foreground">{session.directory ?? "未绑定工作区"}</div>
                   </div>
                   <Button type="button" size="sm" variant={visible ? "secondary" : "default"} disabled={visible} onClick={() => attach(session)}>

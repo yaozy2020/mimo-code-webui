@@ -106,6 +106,26 @@ API Key, Base URL, Model, and WebUI Auth Token can be configured in the Settings
 | `MIMO_PORT` | `4096` | Port the managed `mimo serve` process listens on. |
 | `AUTH_TOKEN` | *(none)* | If set, all `/api/*` requests must include `Authorization: Bearer <AUTH_TOKEN>`. |
 
+### Optional MiMo Watchdog
+
+The WebUI backend already monitors and restarts the base `mimo serve` process when it started that process itself. Use `scripts/mimo-watchdog.sh` only as a manual fallback for deployments where the WebUI server cannot be restarted yet.
+
+```bash
+scripts/mimo-watchdog.sh
+```
+
+Useful environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MIMO_HOST` | `127.0.0.1` | Hostname for the watched `mimo serve`. |
+| `MIMO_PORT` | `4096` | Port for the watched `mimo serve`. |
+| `WATCHDOG_INTERVAL_SEC` | `5` | Health-check interval in seconds. |
+| `WATCHDOG_LOG` | `/tmp/mimo-watchdog.log` | Log file path. |
+| `WATCHDOG_PID_FILE` | `/tmp/mimo-watchdog-<port>.pid` | PID file for the process started by the watchdog. |
+
+The watchdog only stops a process recorded in its own PID file. It does not kill arbitrary `mimo serve` processes on the same port, so a manually started instance remains under your control.
+
 You can also pre-configure MiMo-Code via `~/.mimo/mimo.config.json`:
 
 ```json

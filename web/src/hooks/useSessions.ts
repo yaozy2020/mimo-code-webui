@@ -72,9 +72,11 @@ export function useSessions() {
 
   const setActive = useCallback(
     (sessionID: string | null) => {
+      const session = sessions.find((item) => item.id === sessionID)
+      dispatch({ type: "SET_CURRENT_WORKSPACE", workspace: session?.directory ?? null })
       dispatch({ type: "SET_ACTIVE_SESSION", sessionID })
     },
-    [dispatch],
+    [dispatch, sessions],
   )
 
   useEffect(() => {

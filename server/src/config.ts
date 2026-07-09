@@ -38,6 +38,9 @@ export interface ManualModelInput {
   name?: string
   baseUrl?: string
   apiKey?: string
+  tool_call?: boolean
+  attachment?: boolean
+  reasoning?: boolean
 }
 
 export interface ManualModelSummary {
@@ -45,25 +48,71 @@ export interface ManualModelSummary {
   modelID: string
   name: string
   baseUrl?: string
+  tool_call?: boolean
+  attachment?: boolean
+  reasoning?: boolean
 }
 
 export function getMimoConfigPath(): string {
+  if (process.env.MIMO_CONFIG_PATH) {
+    return process.env.MIMO_CONFIG_PATH
+  }
+  const home = os.homedir()
+  // MiMo serve loads config from ~/.config/mimocode/config.json (or mimocode.jsonc).
+  // Keep the WebUI config in the same directory so model changes are visible to mimo serve.
+  return path.join(home, ".config", "mimocode", "config.json")
+}
+
+export function getLegacyMimoConfigPath(): string {
   const home = os.homedir()
   return path.join(home, ".mimo", "mimo.config.json")
 }
 
+function tryReadConfigFile(configPath: string): MimoConfig | null {
+  try {
+    if (!fs.existsSync(configPath)) return null
+    const content = fs.readFileSync(configPath, "utf-8")
+    if (!content.trim()) return {}
+    return JSON.parse(content) as MimoConfig
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Copy a readable legacy ~/.mimo/mimo.config.json into the MiMo config path
+ * when the target is missing/empty. This lets users who configured providers
+ * in the legacy location keep using them after the path change.
+ */
+export function migrateLegacyMimoConfig(): void {
+  const target = getMimoConfigPath()
+  const targetDir = path.dirname(target)
+  const existing = tryReadConfigFile(target)
+  if (existing && Object.keys(existing).length > 0) return
+
+  const legacy = tryReadConfigFile(getLegacyMimoConfigPath())
+  if (!legacy) return
+
+  try {
+    fs.mkdirSync(targetDir, { recursive: true })
+    fs.writeFileSync(target, `${JSON.stringify(legacy, null, 2)}\n`, "utf-8")
+    console.log(`[config] migrated legacy config to ${target}`)
+  } catch (error) {
+    console.warn(`[config] failed to migrate legacy config to ${target}:`, error)
+  }
+}
+
 export function readMimoConfig(): MimoConfig {
   const configPath = getMimoConfigPath()
-  try {
-    if (!fs.existsSync(configPath)) {
-      return {}
-    }
-    const content = fs.readFileSync(configPath, "utf-8")
-    return JSON.parse(content) as MimoConfig
-  } catch (error) {
-    console.warn(`[config] failed to read ${configPath}:`, error)
-    return {}
-  }
+  const result = tryReadConfigFile(configPath)
+  if (result !== null) return result
+
+  // Fallback to legacy ~/.mimo/mimo.config.json so the WebUI can still show
+  // manually configured models even when the new config path is not writable.
+  const legacy = tryReadConfigFile(getLegacyMimoConfigPath())
+  if (legacy !== null) return legacy
+
+  return {}
 }
 
 function validateConfigID(value: string, field: string): string {
@@ -83,6 +132,10 @@ export function listManualModels(): ManualModelSummary[] {
       modelID,
       name: model.name ?? modelID,
       baseUrl: provider.api,
+      // Manual/backend models are presumed to support workspace tools unless explicitly disabled.
+      tool_call: model.tool_call ?? true,
+      attachment: model.attachment ?? true,
+      reasoning: model.reasoning ?? true,
     })),
   )
 }
@@ -140,9 +193,9 @@ export function addMimoModelConfig(input: ManualModelInput): ManualModelSummary 
           [modelID]: {
             ...models[modelID],
             name,
-            attachment: models[modelID]?.attachment ?? true,
-            reasoning: models[modelID]?.reasoning ?? true,
-            tool_call: models[modelID]?.tool_call ?? true,
+            attachment: input.attachment ?? models[modelID]?.attachment ?? true,
+            reasoning: input.reasoning ?? models[modelID]?.reasoning ?? true,
+            tool_call: input.tool_call ?? models[modelID]?.tool_call ?? true,
             temperature: models[modelID]?.temperature ?? true,
             modalities: models[modelID]?.modalities ?? { input: ["text", "image"], output: ["text"] },
           },
@@ -153,7 +206,15 @@ export function addMimoModelConfig(input: ManualModelInput): ManualModelSummary 
 
   fs.mkdirSync(path.dirname(configPath), { recursive: true })
   fs.writeFileSync(configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, "utf-8")
-  return { providerID, modelID, name, baseUrl }
+  return {
+    providerID,
+    modelID,
+    name,
+    baseUrl,
+    tool_call: input.tool_call ?? models[modelID]?.tool_call ?? true,
+    attachment: input.attachment ?? models[modelID]?.attachment ?? true,
+    reasoning: input.reasoning ?? models[modelID]?.reasoning ?? true,
+  }
 }
 
 export function getProjectRoot(): string {

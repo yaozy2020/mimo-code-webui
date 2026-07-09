@@ -1,13 +1,15 @@
 import cors from "cors"
+import crypto from "node:crypto"
 import express, { type Request, type Response, type NextFunction } from "express"
 import fs from "node:fs"
 import net from "node:net"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { addMimoModelConfig, getProjectRoot, listManualModels, readMimoConfig, resolveOpenAICompatibleModel } from "./config.js"
+import { addMimoModelConfig, getProjectRoot, listManualModels, migrateLegacyMimoConfig, readMimoConfig, resolveOpenAICompatibleModel } from "./config.js"
 import { checkHealth, detectMimo, ensureMimoServerForDirectory, listBuiltinModels, listManagedMimoServers, probeNativeModel, runMimoPrompt, startMimoServer, stopManagedMimoServers, stopMimoServer } from "./mimo.js"
 import { streamOpenAICompatible } from "./openaiStream.js"
 import { createRoutedMimoProxy } from "./proxy.js"
+import { createPublicConfigSummary } from "./status.js"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -15,10 +17,12 @@ const __dirname = path.dirname(__filename)
 const PREFERRED_PORT = Number(process.env.PORT) || 8080
 const PORT_EXPLICITLY_SET = process.env.PORT !== undefined
 const HOST = process.env.HOST || "0.0.0.0"
-const MIMO_PORT = Number(process.env.MIMO_PORT) || 4096
 const MIMO_HOST = process.env.MIMO_HOST || "127.0.0.1"
+const MIMO_PREFERRED_PORT = Number(process.env.MIMO_PORT) || 4096
+const MIMO_PORT_EXPLICITLY_SET = process.env.MIMO_PORT !== undefined
 const AUTH_TOKEN = process.env.AUTH_TOKEN
 const MIMO_WORKSPACE_ROOT = path.resolve(process.env.MIMO_WORKSPACE_ROOT || getProjectRoot())
+const MIMO_HEALTH_INTERVAL_MS = Number(process.env.MIMO_HEALTH_INTERVAL_MS) || 10000
 
 function isPortAvailable(port: number, host: string): Promise<boolean> {
   return new Promise((resolve) => {
@@ -57,7 +61,7 @@ function authMiddleware(req: Request, res: Response, next: NextFunction) {
   }
 
   const token = auth.slice(7)
-  if (token !== AUTH_TOKEN) {
+  if (!AUTH_TOKEN || token.length !== AUTH_TOKEN.length || !crypto.timingSafeEqual(Buffer.from(token), Buffer.from(AUTH_TOKEN))) {
     return res.status(401).json({ error: "Invalid token", authRequired: true })
   }
 
@@ -81,7 +85,7 @@ function requestDirectory(req: Request): string | undefined {
 
 async function main() {
   const app = express()
-  app.use(cors())
+  app.use(cors({ origin: false }))
   // Only parse JSON for non-/api routes; /api is proxied to mimo serve and needs the raw body
   app.use((req, res, next) => {
     if (req.path.startsWith("/api")) return next()
@@ -90,31 +94,111 @@ async function main() {
 
   const port = await findAvailablePort(PREFERRED_PORT, HOST, PORT_EXPLICITLY_SET)
 
-  let mimoInfo = { url: `http://${MIMO_HOST}:${MIMO_PORT}`, port: MIMO_PORT, pid: 0 }
+  // Base MiMo serve state. We keep this as a mutable object so proxies/status can see updates after a restart.
+  const mimoInfo: { url: string; port: number; pid: number } = {
+    url: `http://${MIMO_HOST}:${MIMO_PREFERRED_PORT}`,
+    port: MIMO_PREFERRED_PORT,
+    pid: 0,
+  }
   let mimoStartedByUs = false
+  let shuttingDown = false
+  let restartTimer: ReturnType<typeof setTimeout> | null = null
 
-  // Try to detect existing mimo serve, otherwise start one
-  const existingHealth = await checkHealth(mimoInfo.url)
-  if (existingHealth.healthy) {
-    console.log(`[server] using existing mimo serve at ${mimoInfo.url}`)
-  } else {
+  async function findAvailableMimoPort(): Promise<number> {
+    if (MIMO_PORT_EXPLICITLY_SET) {
+      if (await isPortAvailable(MIMO_PREFERRED_PORT, MIMO_HOST)) return MIMO_PREFERRED_PORT
+      throw new Error(
+        `Requested MIMO_PORT ${MIMO_PREFERRED_PORT} is already in use. Set a different port or unset MIMO_PORT to auto-scan.`,
+      )
+    }
+    const maxAttempts = 100
+    let port = MIMO_PREFERRED_PORT
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (await isPortAvailable(port, MIMO_HOST)) return port
+      console.log(`[server] mimo port ${port} is in use, trying ${port + 1}...`)
+      port++
+    }
+    throw new Error(`Could not find an available mimo port between ${MIMO_PREFERRED_PORT} and ${MIMO_PREFERRED_PORT + maxAttempts - 1}`)
+  }
+
+  async function findExistingMimoPort(preferred: number, host: string, scanRange = 20): Promise<number | null> {
+    for (let port = preferred; port < preferred + scanRange; port++) {
+      const url = `http://${host}:${port}`
+      try {
+        const health = await checkHealth(url)
+        if (health.healthy) {
+          return port
+        }
+      } catch {
+        // port not reachable
+      }
+    }
+    return null
+  }
+
+  async function startManagedBaseMimo(): Promise<boolean> {
+    if (shuttingDown) return false
     const mimo = detectMimo()
     if (!mimo) {
       console.warn("[server] mimo CLI not found. WebUI will start but API calls will fail until mimo serve is available.")
-    } else {
-      console.log(`[server] starting mimo serve on ${MIMO_HOST}:${MIMO_PORT} with workspace root ${MIMO_WORKSPACE_ROOT}...`)
-      mimoInfo = await startMimoServer(MIMO_HOST, MIMO_PORT, MIMO_WORKSPACE_ROOT)
+      return false
+    }
+
+    try {
+      const port = await findAvailableMimoPort()
+      mimoInfo.url = `http://${MIMO_HOST}:${port}`
+      mimoInfo.port = port
+      console.log(`[server] starting mimo serve on ${MIMO_HOST}:${port} with workspace root ${MIMO_WORKSPACE_ROOT}...`)
+      const info = await startMimoServer(MIMO_HOST, port, MIMO_WORKSPACE_ROOT)
+      mimoInfo.url = info.url
+      mimoInfo.port = info.port
+      mimoInfo.pid = info.pid
       mimoStartedByUs = true
       console.log(`[server] mimo serve ready at ${mimoInfo.url} (pid ${mimoInfo.pid})`)
+      return true
+    } catch (error) {
+      console.error("[server] failed to start mimo serve:", error)
+      return false
     }
   }
 
-  const proxy = createRoutedMimoProxy(async (req) => {
-    const directory = requestDirectory(req)
-    if (!directory) return mimoInfo.url
-    const instance = await ensureMimoServerForDirectory(MIMO_HOST, MIMO_PORT, directory)
-    return instance.url
-  })
+  async function restartBaseMimo(delayMs = 3000) {
+    if (shuttingDown) return
+    if (restartTimer) clearTimeout(restartTimer)
+    restartTimer = setTimeout(async () => {
+      restartTimer = null
+      if (shuttingDown) return
+      console.warn("[server] base mimo serve appears unhealthy, restarting...")
+      try {
+        await stopMimoServer()
+      } catch (error) {
+        console.warn("[server] error stopping old mimo serve:", error)
+      }
+      await startManagedBaseMimo()
+    }, delayMs)
+  }
+
+  // Try to detect an existing mimo serve on nearby ports first. This avoids
+  // spawning a second instance when the user already runs `mimo serve`.
+  const existingPort = await findExistingMimoPort(MIMO_PREFERRED_PORT, MIMO_HOST)
+  if (existingPort !== null) {
+    mimoInfo.url = `http://${MIMO_HOST}:${existingPort}`
+    mimoInfo.port = existingPort
+    console.log(`[server] using existing mimo serve at ${mimoInfo.url}`)
+  } else {
+    await startManagedBaseMimo()
+  }
+
+  // Health monitor: if we manage the base mimo, restart it when it goes down
+  const healthInterval = setInterval(async () => {
+    if (!mimoStartedByUs || shuttingDown) return
+    const health = await checkHealth(mimoInfo.url)
+    if (!health.healthy) {
+      await restartBaseMimo()
+    }
+  }, MIMO_HEALTH_INTERVAL_MS)
+
+  const proxy = createRoutedMimoProxy(async () => mimoInfo.url)
 
   // Public status endpoint (no auth) so frontend can detect if auth is required
   app.get("/status", async (req, res) => {
@@ -132,12 +216,13 @@ async function main() {
         projectServers: listManagedMimoServers(),
         path: pathInfo,
       },
-      config: readMimoConfig(),
+      config: createPublicConfigSummary(readMimoConfig()),
       authRequired: !!AUTH_TOKEN,
     })
   })
 
   app.use("/local-config", authMiddleware)
+  app.use("/local-run", authMiddleware)
   app.get("/local-config/models", (_req, res) => {
     res.json({ models: listManualModels() })
   })
@@ -160,6 +245,24 @@ async function main() {
         return
       }
       res.json(await probeNativeModel({ baseUrl: mimoInfo.url, model }))
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : String(error) })
+    }
+  })
+  app.post("/local-config/restart-mimo", async (_req, res) => {
+    try {
+      if (!mimoStartedByUs) {
+        res.status(400).json({ error: "MiMo serve is not managed by this WebUI process. Please restart the WebUI service manually." })
+        return
+      }
+      console.log("[server] restarting base mimo serve via WebUI request")
+      await stopMimoServer()
+      const ok = await startManagedBaseMimo()
+      if (!ok) {
+        res.status(500).json({ error: "Failed to restart mimo serve" })
+        return
+      }
+      res.json({ ok: true, url: mimoInfo.url })
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : String(error) })
     }
@@ -244,6 +347,12 @@ async function main() {
   // Graceful shutdown
   const shutdown = async () => {
     console.log("[server] shutting down...")
+    shuttingDown = true
+    if (restartTimer) {
+      clearTimeout(restartTimer)
+      restartTimer = null
+    }
+    clearInterval(healthInterval)
     server.close()
     if (mimoStartedByUs) {
       await stopMimoServer()

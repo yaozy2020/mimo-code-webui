@@ -1,22 +1,26 @@
 import { useEffect, useState } from "react"
-import { Activity, Bot, Menu, Plus, Settings } from "lucide-react"
-import { fetchAvailableModels, type RuntimeModel } from "@/api/client"
+import { Activity, Bot, Menu, PanelLeft, Plus, Settings } from "lucide-react"
+import { fetchAvailableModels, fetchRuntimeModels, type RuntimeModel } from "@/api/client"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Select } from "@/components/ui/select"
 import { WorkspaceSessionDialog } from "@/components/chat/WorkspaceSessionDialog"
+import { supportsNativeWorkspace } from "@/components/chat/modelRouting"
 import { useAppDispatch, useAppState } from "@/stores/appStore"
 
 interface HeaderProps {
   onOpenSidebar: () => void
+  onToggleSidebar: () => void
+  sidebarOpen: boolean
   onOpenSettings: () => void
   onOpenDiagnostics: () => void
 }
 
-export function Header({ onOpenSidebar, onOpenSettings, onOpenDiagnostics }: HeaderProps) {
+export function Header({ onOpenSidebar, onToggleSidebar, sidebarOpen, onOpenSettings, onOpenDiagnostics }: HeaderProps) {
   const dispatch = useAppDispatch()
   const { activeSessionID, agentStatus, currentWorkspace, sessions, settings, status } = useAppState()
   const [runtimeModels, setRuntimeModels] = useState<RuntimeModel[]>([])
+  const [nativeModelKeys, setNativeModelKeys] = useState<Set<string>>(new Set())
   const [workspaceDialogOpen, setWorkspaceDialogOpen] = useState(false)
   const sessionState = activeSessionID ? agentStatus[activeSessionID]?.state ?? "idle" : "idle"
   const activeSession = activeSessionID ? sessions.find((session) => session.id === activeSessionID) : undefined
@@ -24,10 +28,11 @@ export function Header({ onOpenSidebar, onOpenSettings, onOpenDiagnostics }: Hea
 
   useEffect(() => {
     let cancelled = false
-    fetchAvailableModels()
-      .then((models) => {
+    Promise.all([fetchAvailableModels(), fetchRuntimeModels()])
+      .then(([models, nativeModels]) => {
         if (cancelled) return
         setRuntimeModels(models)
+        setNativeModelKeys(new Set(nativeModels.map((model) => `${model.provider}/${model.id}`)))
         const limits: Record<string, number> = {}
         for (const model of models) {
           if (model.contextLimit) limits[`${model.provider}/${model.id}`] = model.contextLimit
@@ -35,7 +40,10 @@ export function Header({ onOpenSidebar, onOpenSettings, onOpenDiagnostics }: Hea
         dispatch({ type: "SET_MODEL_LIMITS", limits })
       })
       .catch(() => {
-        if (!cancelled) setRuntimeModels([])
+        if (!cancelled) {
+          setRuntimeModels([])
+          setNativeModelKeys(new Set())
+        }
       })
     return () => {
       cancelled = true
@@ -54,12 +62,15 @@ export function Header({ onOpenSidebar, onOpenSettings, onOpenDiagnostics }: Hea
   }
 
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b bg-background/85 px-2 shadow-sm backdrop-blur sm:px-4">
+    <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b bg-background/95 px-3 shadow-sm backdrop-blur sm:px-4">
       <div className="flex min-w-0 items-center gap-2 sm:gap-3">
         <Button size="icon" variant="ghost" onClick={onOpenSidebar} className="h-9 w-9 shrink-0 md:hidden" title="会话">
           <Menu className="h-5 w-5" />
         </Button>
-        <div className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm sm:flex">
+        <Button size="icon" variant="ghost" onClick={onToggleSidebar} className="h-9 w-9 shrink-0 hidden md:flex" title={sidebarOpen ? "隐藏会话栏" : "显示会话栏"}>
+          <PanelLeft className="h-5 w-5" />
+        </Button>
+        <div className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm sm:flex">
           <Bot className="h-4 w-4" />
         </div>
         <div className="min-w-0 max-w-[46vw] sm:max-w-none">
@@ -79,6 +90,7 @@ export function Header({ onOpenSidebar, onOpenSettings, onOpenDiagnostics }: Hea
             {modelOptions.map((model) => (
               <option key={`${model.provider}:${model.id}`} value={`${model.provider}/${model.id}`}>
                 {model.name === model.id ? `${model.provider}/${model.id}` : `${model.provider}/${model.id} - ${model.name}`}
+                {supportsNativeWorkspace(model, nativeModelKeys) ? " (支持工作区)" : " (仅对话)"}
               </option>
             ))}
             <option value="__add_model__">新增模型...</option>

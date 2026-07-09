@@ -46,7 +46,7 @@ export function FileChangesPanel({ diffs, onClose }: FileChangesPanelProps) {
   }, [selectedFile])
 
   return (
-    <aside className="fixed inset-x-2 bottom-2 top-16 z-30 flex flex-col overflow-hidden rounded-2xl border bg-background shadow-2xl lg:static lg:inset-auto lg:z-auto lg:w-[420px] lg:rounded-none lg:border-y-0 lg:border-r-0 lg:shadow-xl">
+    <aside className="fixed inset-x-2 bottom-2 top-16 z-30 flex flex-col overflow-hidden rounded-2xl border bg-background shadow-2xl lg:static lg:inset-auto lg:z-auto lg:w-[480px] lg:rounded-none lg:border-y-0 lg:border-r-0 lg:shadow-xl">
       <div className="flex items-center justify-between border-b px-4 py-3">
         <div>
           <h2 className="text-sm font-semibold">文件变更</h2>

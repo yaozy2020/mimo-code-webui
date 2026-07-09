@@ -6,16 +6,18 @@ import { useEffect, useRef } from "react"
 
 export function useStreamingMessage() {
   const dispatch = useAppDispatch()
-  const { activeSessionID, sessions } = useAppState()
+  const { activeSessionID, sessions, agentStatus } = useAppState()
   const activeDirectory = activeSessionID ? sessions.find((session) => session.id === activeSessionID)?.directory : undefined
   const abortRef = useRef<AbortController | null>(null)
   const activeSessionRef = useRef<string | null>(activeSessionID)
   const activeDirectoryRef = useRef<string | undefined>(activeDirectory)
+  const agentStatusRef = useRef(agentStatus)
 
   useEffect(() => {
     activeSessionRef.current = activeSessionID
     activeDirectoryRef.current = activeDirectory
-  }, [activeDirectory, activeSessionID])
+    agentStatusRef.current = agentStatus
+  }, [activeDirectory, activeSessionID, agentStatus])
 
   useEffect(() => {
     const abort = new AbortController()
@@ -28,6 +30,7 @@ export function useStreamingMessage() {
           getActiveSessionID: () => activeSessionRef.current,
           getActiveDirectory: () => activeDirectoryRef.current,
           signal: abort.signal,
+          isSessionBusy: (sessionID) => agentStatusRef.current[sessionID]?.state === "busy",
         })
       },
       (error) => {
@@ -54,24 +57,28 @@ interface StreamEventContext {
   getActiveSessionID: () => string | null
   getActiveDirectory: () => string | undefined
   signal: AbortSignal
+  isSessionBusy: (sessionID: string) => boolean
 }
 
 function syncSessionSnapshot(
   sessionID: string,
   directory: string | undefined,
   dispatch: ReturnType<typeof useAppDispatch>,
-  signal: AbortSignal,
+  context: StreamEventContext,
 ) {
   window.setTimeout(() => {
     void (async () => {
-      if (signal.aborted) return
+      if (context.signal.aborted) return
+      if (context.isSessionBusy(sessionID)) {
+        return
+      }
       try {
         const [messages, todos] = await Promise.all([getMessages(sessionID, 50, undefined, directory), getTodos(sessionID, directory)])
-        if (signal.aborted) return
+        if (context.signal.aborted) return
         dispatch({ type: "SET_MESSAGES", sessionID, messages })
         dispatch({ type: "SET_TODOS", sessionID, todos })
       } catch (error) {
-        if (!signal.aborted) console.error("[streaming] failed to sync session snapshot:", error)
+        if (!context.signal.aborted) console.error("[streaming] failed to sync session snapshot:", error)
       }
     })()
   }, 250)
@@ -139,7 +146,7 @@ function handleEvent(event: StreamEvent, dispatch: ReturnType<typeof useAppDispa
         status: { sessionID: props.sessionID, state: "idle" },
       })
       if (props.sessionID === context.getActiveSessionID()) {
-        syncSessionSnapshot(props.sessionID, context.getActiveDirectory(), dispatch, context.signal)
+        syncSessionSnapshot(props.sessionID, context.getActiveDirectory(), dispatch, context)
       }
       break
     }

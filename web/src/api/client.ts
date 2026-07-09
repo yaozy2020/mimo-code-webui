@@ -153,7 +153,21 @@ export async function fetchStatus(): Promise<Record<string, unknown>> {
 }
 
 interface RuntimeModelConfig {
-  provider?: Record<string, { models?: Record<string, { name?: string; limit?: { context?: number } }> }>
+  provider?: Record<
+    string,
+    {
+      models?: Record<
+        string,
+        {
+          name?: string
+          limit?: { context?: number }
+          tool_call?: boolean
+          attachment?: boolean
+          reasoning?: boolean
+        }
+      >
+    }
+  >
 }
 
 export interface RuntimeModel {
@@ -163,27 +177,33 @@ export interface RuntimeModel {
   baseUrl?: string
   contextLimit?: number
   source?: "template" | "runtime" | "backend" | "browser"
+  tool_call?: boolean
+  attachment?: boolean
+  reasoning?: boolean
 }
 
 export async function fetchRuntimeModels(): Promise<RuntimeModel[]> {
-  const config = await fetchJson<RuntimeModelConfig>("/config")
+  const config = await fetchJson<RuntimeModelConfig>("/api/config")
   return Object.entries(config.provider ?? {}).flatMap(([provider, info]) =>
     Object.entries(info.models ?? {}).map(([id, model]) => ({
       id,
       name: model.name ?? id,
       provider,
       contextLimit: model.limit?.context,
+      tool_call: model.tool_call,
+      attachment: model.attachment,
+      reasoning: model.reasoning,
       source: "runtime" as const,
     })),
   )
 }
 
 interface LocalConfigModelsResponse {
-  models?: Array<{ providerID: string; modelID: string; name?: string; baseUrl?: string }>
+  models?: Array<{ providerID: string; modelID: string; name?: string; baseUrl?: string; tool_call?: boolean; attachment?: boolean; reasoning?: boolean }>
 }
 
 interface LocalConfigModelResponse {
-  model: { providerID: string; modelID: string; name: string; baseUrl?: string }
+  model: { providerID: string; modelID: string; name: string; baseUrl?: string; tool_call?: boolean; attachment?: boolean; reasoning?: boolean }
 }
 
 const MANUAL_MODELS_KEY = "mimo-webui-manual-models"
@@ -194,6 +214,9 @@ export interface ManualModelInput {
   name?: string
   baseUrl?: string
   apiKey?: string
+  tool_call?: boolean
+  attachment?: boolean
+  reasoning?: boolean
 }
 
 function readBrowserModels(): RuntimeModel[] {
@@ -213,6 +236,9 @@ function writeBrowserModel(input: ManualModelInput): RuntimeModel {
     id: input.modelID.trim(),
     name: input.name?.trim() || input.modelID.trim(),
     baseUrl: input.baseUrl?.trim(),
+    tool_call: input.tool_call ?? true,
+    attachment: input.attachment ?? true,
+    reasoning: input.reasoning ?? true,
     source: "browser",
   }
   const existing = readBrowserModels().filter((item) => item.provider !== model.provider || item.id !== model.id)
@@ -229,6 +255,9 @@ export async function fetchBackendModels(): Promise<RuntimeModel[]> {
     id: model.modelID,
     name: model.name ?? model.modelID,
     baseUrl: model.baseUrl,
+    tool_call: model.tool_call,
+    attachment: model.attachment,
+    reasoning: model.reasoning,
     source: "backend",
   }))
 }
@@ -258,8 +287,15 @@ export async function fetchAvailableModels(): Promise<RuntimeModel[]> {
     const existing = byKey.get(key)
     if (!existing) {
       byKey.set(key, model)
-    } else if (!existing.contextLimit && model.contextLimit) {
-      byKey.set(key, { ...existing, contextLimit: model.contextLimit })
+    } else {
+      byKey.set(key, {
+        ...existing,
+        contextLimit: existing.contextLimit ?? model.contextLimit,
+        // If any source says the model supports tools/files/reasoning, trust it.
+        tool_call: existing.tool_call || model.tool_call,
+        attachment: existing.attachment || model.attachment,
+        reasoning: existing.reasoning || model.reasoning,
+      })
     }
   }
   return [...byKey.values()]
@@ -287,8 +323,26 @@ export async function saveManualModel(input: ManualModelInput, writeBackend: boo
     id: data.model.modelID,
     name: data.model.name,
     baseUrl: data.model.baseUrl,
+    tool_call: data.model.tool_call,
+    attachment: data.model.attachment,
+    reasoning: data.model.reasoning,
     source: "backend",
   }
+}
+
+export async function restartMimoServer(): Promise<{ ok: boolean; url?: string }> {
+  const response = await fetch("/local-config/restart-mimo", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeaders(),
+    },
+  })
+  if (!response.ok) {
+    const data = (await response.json().catch(() => ({}))) as { error?: string }
+    throw new Error(data.error || `HTTP ${response.status}`)
+  }
+  return response.json() as Promise<{ ok: boolean; url?: string }>
 }
 
 export async function runLocalPrompt(input: { model: string; prompt: string }): Promise<{ text: string }> {

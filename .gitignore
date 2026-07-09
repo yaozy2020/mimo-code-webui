@@ -1,6 +1,8 @@
 # Dependencies
 node_modules/
 .pnpm-store/
+.playwright-browsers/
+.chromium-smoke-home/
 
 # Build outputs
 web/dist/
@@ -29,3 +31,4 @@ Thumbs.db
 
 # MiMo
 .mimocode/
+.mimo-home/

@@ -1,6 +1,8 @@
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { ChevronDown, ChevronRight, Copy, FileText, Pencil, Terminal, ListTodo, Check, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { nextStreamingDisplay } from "@/lib/streamingDisplay"
+import { formatMessageTime } from "@/lib/time"
 import type { Message } from "@/types"
 
 interface MessageBubbleProps {
@@ -80,6 +82,17 @@ function toolDetailSummary(part: NonNullable<Message["parts"]>[number]): string 
 function CollapsibleTool({ part }: { part: NonNullable<Message["parts"]>[number] }) {
   const [open, setOpen] = useState(false)
   const status = part.state?.status ?? "pending"
+  const prevStatusRef = useRef(status)
+
+  useEffect(() => {
+    const wasRunning = ["pending", "running"].includes(prevStatusRef.current)
+    const isNowDone = status === "completed" || status === "success" || status === "done"
+    prevStatusRef.current = status
+    if (wasRunning && isNowDone) {
+      setOpen(false)
+    }
+  }, [status])
+
   const hasDetail = Boolean(part.state?.input || part.state?.output || part.state?.error)
   const Icon = toolIcon(part.tool)
   const action = toolActionLabel(part.tool)
@@ -91,16 +104,17 @@ function CollapsibleTool({ part }: { part: NonNullable<Message["parts"]>[number]
     <div className="min-w-0 text-sm">
       <button
         type="button"
-        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted/50"
+        className="flex w-full items-center gap-x-2.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-muted/60"
         onClick={() => setOpen(!open)}
       >
         <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        <span className="shrink-0 text-muted-foreground">{action}</span>
+        <span className="shrink-0 text-xs font-medium text-muted-foreground">{action}</span>
         {target && (
-          <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground/80">
+          <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground/80">
             {target}
           </span>
         )}
+        {detail && <span className="shrink-0 text-xs text-muted-foreground">{detail}</span>}
         <span className="shrink-0 text-xs">
           {isDone ? (
             <Check className="h-3.5 w-3.5 text-emerald-500" />
@@ -108,14 +122,13 @@ function CollapsibleTool({ part }: { part: NonNullable<Message["parts"]>[number]
             <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
           ) : null}
         </span>
-        {detail && <span className="shrink-0 text-xs text-muted-foreground">{detail}</span>}
         {hasDetail && (
-          open ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50" /> :
-          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50" />
+          open ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" /> :
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
         )}
       </button>
       {open && (
-        <div className="ml-5 space-y-2 border-l pl-3 pt-1">
+        <div className="ml-[1.15rem] space-y-2 border-l border-border/70 pl-3 pt-1">
           {part.state?.input != null && (
             <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/60 p-2 font-mono text-xs [overflow-wrap:anywhere]">
               {preview(part.state.input)}
@@ -141,24 +154,57 @@ export function MessageBubble({ message, onCopy }: MessageBubbleProps) {
   const isUser = message.role === "user"
   const toolParts = message.parts?.filter((part) => part.type === "tool") ?? []
   const [thinkingOpen, setThinkingOpen] = useState(false)
+  const prevOptimisticRef = useRef(message.optimistic)
+
+  useEffect(() => {
+    const wasOptimistic = prevOptimisticRef.current
+    const isNowComplete = wasOptimistic && !message.optimistic
+    prevOptimisticRef.current = message.optimistic
+    if (isNowComplete) {
+      setThinkingOpen(false)
+    }
+  }, [message.optimistic, message.id])
 
   const displayContent = message.content || message.parts
     ?.filter((p) => p.type === "text")
     .map((p) => p.text ?? p.content ?? "")
     .join("") || ""
+  const [assistantDisplayContent, setAssistantDisplayContent] = useState(displayContent)
+  const messageTime = formatMessageTime(message.time?.created)
+  const renderedContent = isUser ? displayContent : assistantDisplayContent
+
+  useEffect(() => {
+    if (isUser) {
+      setAssistantDisplayContent(displayContent)
+      return
+    }
+    if (!displayContent.startsWith(assistantDisplayContent) || assistantDisplayContent.length > displayContent.length) {
+      setAssistantDisplayContent(displayContent)
+      return
+    }
+    if (assistantDisplayContent === displayContent) return
+
+    const timeout = window.setTimeout(() => {
+      setAssistantDisplayContent((current) => nextStreamingDisplay(current, displayContent))
+    }, 20)
+    return () => window.clearTimeout(timeout)
+  }, [assistantDisplayContent, displayContent, isUser])
 
   if (isUser) {
     return (
       <div className="group flex justify-end py-2">
-        <div className="flex max-w-[80%] items-start gap-2">
-          <div className="min-w-0 whitespace-pre-wrap break-words rounded-2xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground leading-relaxed [overflow-wrap:anywhere]">
-            {displayContent || "..."}
+        <div className="flex max-w-[85%] items-start gap-2">
+          <div className="min-w-0">
+            <div className="whitespace-pre-wrap break-words rounded-2xl bg-primary px-4 py-2.5 text-sm font-medium leading-relaxed text-primary-foreground shadow-sm [overflow-wrap:anywhere]">
+              {renderedContent || "..."}
+            </div>
+            {messageTime && <div className="mt-1 text-right text-[11px] text-muted-foreground">{messageTime}</div>}
           </div>
           {onCopy && (
             <Button
               size="icon"
               variant="ghost"
-              className="h-7 w-7 shrink-0 opacity-0 group-hover:opacity-100"
+              className="h-7 w-7 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
               onClick={onCopy}
               title="复制"
             >
@@ -171,7 +217,8 @@ export function MessageBubble({ message, onCopy }: MessageBubbleProps) {
   }
 
   return (
-    <div className="group flex flex-col gap-1 py-2">
+    <div className="group flex flex-col gap-1.5 py-2">
+      {messageTime && <div className="text-[11px] text-muted-foreground">{messageTime}</div>}
       {message.thinking && (
         <div className="text-xs text-muted-foreground/70">
           <button
@@ -192,14 +239,14 @@ export function MessageBubble({ message, onCopy }: MessageBubbleProps) {
       {toolParts.map((part) => (
         <CollapsibleTool key={part.id} part={part} />
       ))}
-      {displayContent && (
+      {renderedContent && (
         <div className="relative whitespace-pre-wrap break-words text-sm leading-relaxed [overflow-wrap:anywhere]">
-          {displayContent}
+          {renderedContent}
           {onCopy && (
             <Button
               size="icon"
               variant="ghost"
-              className="absolute -right-8 top-0 h-6 w-6 opacity-0 group-hover:opacity-100"
+              className="absolute -right-8 top-0 h-6 w-6 opacity-0 transition-opacity group-hover:opacity-100"
               onClick={onCopy}
               title="复制回复"
             >
@@ -208,7 +255,7 @@ export function MessageBubble({ message, onCopy }: MessageBubbleProps) {
           )}
         </div>
       )}
-      {!displayContent && !toolParts.length && (
+      {!renderedContent && !toolParts.length && (
         <div className="text-sm text-muted-foreground italic">...</div>
       )}
     </div>

@@ -72,11 +72,11 @@ export async function respondPermission(
 }
 
 export async function listPermissions(): Promise<PermissionRequest[]> {
-  return fetchJson<PermissionRequest[]>("/permission")
+  return fetchJson<PermissionRequest[]>("/api/permission")
 }
 
 export async function listQuestions(): Promise<QuestionRequest[]> {
-  return fetchJson<QuestionRequest[]>("/question")
+  return fetchJson<QuestionRequest[]>("/api/question")
 }
 
 export async function respondQuestion(

@@ -33,7 +33,7 @@
 - Produces: `streamOpenAICompatible(input, handlers): Promise<void>`
 - Produces endpoint: `POST /local-run/stream` with request `{ model: string; prompt: string }` and SSE events `{ type: "start" | "delta" | "error" | "done" }`
 
-- [ ] **Step 1: Add model config resolver**
+- [x] **Step 1: Add model config resolver**
 
 Modify `server/src/config.ts` after `listManualModels()`:
 
@@ -56,7 +56,7 @@ export function resolveOpenAICompatibleModel(model: string) {
 }
 ```
 
-- [ ] **Step 2: Add OpenAI stream helper**
+- [x] **Step 2: Add OpenAI stream helper**
 
 Create `server/src/openaiStream.ts`:
 
@@ -151,7 +151,7 @@ export async function streamOpenAICompatible(input: OpenAIStreamInput, handlers:
 }
 ```
 
-- [ ] **Step 3: Add `/local-run/stream` route**
+- [x] **Step 3: Add `/local-run/stream` route**
 
 Modify imports in `server/src/index.ts`:
 
@@ -199,7 +199,7 @@ Add route immediately after `/local-run`:
   })
 ```
 
-- [ ] **Step 4: Verify server typecheck**
+- [x] **Step 4: Verify server typecheck**
 
 Run: `PATH="/home/yzy/.cache/pre-commit/repoupkf3_zx/node_env-default/bin:$PATH" npm run typecheck -w server`
 
@@ -219,7 +219,7 @@ Expected: PASS.
 - Produces: `runLocalPromptStream(input, handlers): Promise<void>`
 - Consumes: backend `/local-run/stream` event types `start`, `delta`, `error`, `done`
 
-- [ ] **Step 1: Add streaming fallback client**
+- [x] **Step 1: Add streaming fallback client**
 
 Append to `web/src/api/client.ts`:
 
@@ -278,7 +278,7 @@ export async function runLocalPromptStream(
 }
 ```
 
-- [ ] **Step 2: Route fallback sends through stream before `/local-run`**
+- [x] **Step 2: Route fallback sends through stream before `/local-run`**
 
 Modify `web/src/components/chat/ChatArea.tsx` import:
 
@@ -334,7 +334,7 @@ Replace the current non-runtime fallback block at lines around `const result = a
 
 Important: during implementation, avoid using stale `messages` inside this catch to decide whether any delta arrived. Prefer a local `let receivedDelta = false` variable set in `onDelta`.
 
-- [ ] **Step 3: Verify web typecheck**
+- [x] **Step 3: Verify web typecheck**
 
 Run: `PATH="/home/yzy/.cache/pre-commit/repoupkf3_zx/node_env-default/bin:$PATH" npm run typecheck -w web`
 
@@ -352,7 +352,7 @@ Expected: PASS.
 **Interfaces:**
 - Consumes: `/api/session/:id/prompt_async`, `/local-run/stream`, `/local-run`
 
-- [ ] **Step 1: Full build**
+- [x] **Step 1: Full build**
 
 Run: `PATH="/home/yzy/.cache/pre-commit/repoupkf3_zx/node_env-default/bin:$PATH" npm run typecheck && PATH="/home/yzy/.cache/pre-commit/repoupkf3_zx/node_env-default/bin:$PATH" npm run build`
 

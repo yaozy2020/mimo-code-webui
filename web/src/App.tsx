@@ -10,11 +10,13 @@ import { useMimoStatus } from "@/hooks/useMimoStatus"
 import { useStreamingMessage } from "@/hooks/useStreamingMessage"
 import { AppProvider, useAppDispatch, useAppState } from "@/stores/appStore"
 import { cn } from "@/lib/utils"
+import type { SlashAction } from "@/components/chat/slashCommands"
 
 function AppContent() {
   const [showSettings, setShowSettings] = useState(false)
   const [showDiagnostics, setShowDiagnostics] = useState(false)
   const [showSidebar, setShowSidebar] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(true)
   const dispatch = useAppDispatch()
   const { settings, authRequired } = useAppState()
 
@@ -46,6 +48,17 @@ function AppContent() {
     }
   }, [dispatch])
 
+  const handleSlashAction = (action: SlashAction) => {
+    if (action === "models") {
+      setShowSettings(true)
+      return
+    }
+    if (action === "sessions") {
+      setShowSidebar(true)
+      setSidebarOpen(true)
+    }
+  }
+
   useEffect(() => {
     let cancelled = false
 
@@ -66,15 +79,17 @@ function AppContent() {
   }, [dispatch])
 
   return (
-    <div className={cn("flex h-dvh min-h-0 flex-col bg-gradient-to-br from-background via-background to-muted/40", settings.theme)}>
+    <div className={cn("flex h-dvh min-h-0 flex-col bg-background", settings.theme)}>
       <Header
         onOpenSidebar={() => setShowSidebar(true)}
+        onToggleSidebar={() => setSidebarOpen((prev) => !prev)}
+        sidebarOpen={sidebarOpen}
         onOpenSettings={() => setShowSettings(true)}
         onOpenDiagnostics={() => setShowDiagnostics(true)}
       />
       <div className="flex min-h-0 flex-1 overflow-hidden">
-        <Sidebar open={showSidebar} onClose={() => setShowSidebar(false)} />
-        <ChatArea />
+        <Sidebar open={showSidebar} onClose={() => setShowSidebar(false)} desktopOpen={sidebarOpen} />
+        <ChatArea onSlashAction={handleSlashAction} />
       </div>
       {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
       {showDiagnostics && <DiagnosticsPanel onClose={() => setShowDiagnostics(false)} />}

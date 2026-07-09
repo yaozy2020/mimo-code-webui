@@ -10,9 +10,10 @@ interface WorkspaceSessionDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   defaultWorkspace?: string | null
+  onSuccess?: () => void
 }
 
-export function WorkspaceSessionDialog({ open, onOpenChange, defaultWorkspace }: WorkspaceSessionDialogProps) {
+export function WorkspaceSessionDialog({ open, onOpenChange, defaultWorkspace, onSuccess }: WorkspaceSessionDialogProps) {
   const newChat = useNewChat()
   const { status } = useAppState()
   const serveDirectory = status.directory ?? status.workspaceRoot
@@ -40,6 +41,7 @@ export function WorkspaceSessionDialog({ open, onOpenChange, defaultWorkspace }:
     setError(null)
     try {
       await newChat({ directory, title: title.trim() || undefined })
+      onSuccess?.()
       onOpenChange(false)
     } catch (submitError) {
       const message = submitError instanceof Error ? submitError.message : String(submitError)
@@ -58,7 +60,9 @@ export function WorkspaceSessionDialog({ open, onOpenChange, defaultWorkspace }:
       <form onSubmit={handleSubmit} className="grid gap-4">
         <DialogHeader>
           <DialogTitle>新建工作区会话</DialogTitle>
-          <DialogDescription>选择代码所在目录后再创建会话，WebUI 会为该目录启动或复用独立的 mimo serve。</DialogDescription>
+          <DialogDescription>
+            选择代码所在目录后再创建会话，WebUI 会为该目录启动或复用独立的 mimo serve。
+          </DialogDescription>
         </DialogHeader>
         <div className="grid gap-2">
           <Label htmlFor="workspace-path">工作区路径</Label>
@@ -69,14 +73,14 @@ export function WorkspaceSessionDialog({ open, onOpenChange, defaultWorkspace }:
             placeholder="/vol2/1000/下载/mimo/mimo-code-webui"
             autoFocus
           />
-          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <span className="truncate">默认实例目录：{serveDirectory ?? "未知"}；其他目录会走独立项目实例</span>
-            {serveDirectory && (
-              <Button type="button" size="sm" variant="ghost" className="h-6 px-2" onClick={() => setWorkspace(serveDirectory)}>
-                使用当前目录
-              </Button>
-            )}
-          </div>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+              <span className="truncate">默认实例目录：{serveDirectory ?? "未知"}；其他目录会走独立项目实例</span>
+              {serveDirectory && (
+                <Button type="button" size="sm" variant="ghost" className="h-6 shrink-0 px-2" onClick={() => setWorkspace(serveDirectory)}>
+                  使用当前目录
+                </Button>
+              )}
+            </div>
         </div>
         <div className="grid gap-2">
           <Label htmlFor="session-title">会话标题（可选）</Label>

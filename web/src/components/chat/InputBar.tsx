@@ -3,6 +3,7 @@ import { Code2, FileText, FileSearch, ImagePlus, Layers, Paperclip, Send, Square
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
+import { expandSlashCommand, getSlashCommandMatches, slashCommands, type SlashAction, type SlashCommand } from "./slashCommands"
 import type { PromptPart } from "@/api/message"
 
 export type PromptMode = "build" | "plan" | "compose"
@@ -28,6 +29,7 @@ const modeConfig: Record<PromptMode, { icon: typeof Code2; label: string; title:
 interface InputBarProps {
   onSend: (text: string, mode: PromptMode, attachments: PendingAttachment[]) => void
   onAbort: () => void
+  onSlashAction?: (action: SlashAction) => void
   busy: boolean
 }
 
@@ -57,7 +59,7 @@ function isTextAttachment(file: File) {
   return file.type.startsWith("text/") || /\.(md|txt|json|csv|log|xml|ya?ml|ts|tsx|js|jsx|css|html|py|sh)$/i.test(file.name)
 }
 
-export function InputBar({ onSend, onAbort, busy }: InputBarProps) {
+export function InputBar({ onSend, onAbort, onSlashAction, busy }: InputBarProps) {
   const [text, setText] = useState("")
   const [mode, setMode] = useState<PromptMode>("build")
   const [attachments, setAttachments] = useState<PendingAttachment[]>([])
@@ -65,6 +67,8 @@ export function InputBar({ onSend, onAbort, busy }: InputBarProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const sendLockedRef = useRef(false)
+  const slashMatches = getSlashCommandMatches(text)
+  const showSlashMenu = slashMatches.length > 0
 
   useEffect(() => {
     if (!busy) sendLockedRef.current = false
@@ -73,12 +77,46 @@ export function InputBar({ onSend, onAbort, busy }: InputBarProps) {
   const handleSend = () => {
     if (busy || sendLockedRef.current) return
     if (!text.trim() && attachments.length === 0) return
+    const expanded = expandSlashCommand(text.trim())
+    if (expanded.handled && expanded.type === "action") {
+      runSlashAction(expanded.action)
+      setText("")
+      textareaRef.current?.focus()
+      return
+    }
     sendLockedRef.current = true
-    onSend(text.trim(), mode, attachments)
+    onSend(expanded.text.trim(), expanded.mode ?? mode, attachments)
     setText("")
     setAttachments([])
     setAttachmentError(null)
     textareaRef.current?.focus()
+  }
+
+  const showSlashHelp = () => {
+    setText(`可用斜杠命令：\n${slashCommands.map((command) => `${command.name} - ${command.label}`).join("\n")}`)
+  }
+
+  const runSlashAction = (action?: SlashAction) => {
+    if (!action) return
+    if (action === "help") {
+      showSlashHelp()
+      return
+    }
+    onSlashAction?.(action)
+  }
+
+  const applySlashCommand = (command: SlashCommand) => {
+    const trimmedStart = text.trimStart()
+    const rest = trimmedStart.replace(/^\/\S+\s*/, "").trim()
+    if (command.type === "action") {
+      runSlashAction(command.action)
+      setText("")
+      window.requestAnimationFrame(() => textareaRef.current?.focus())
+      return
+    }
+    if (command.mode) setMode(command.mode)
+    setText(command.template?.(rest) ?? "")
+    window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
 
   const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -121,6 +159,11 @@ export function InputBar({ onSend, onAbort, busy }: InputBarProps) {
   }
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey && showSlashMenu && !text.trimStart().includes(" ")) {
+      e.preventDefault()
+      applySlashCommand(slashMatches[0])
+      return
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
       handleSend()
@@ -135,8 +178,29 @@ export function InputBar({ onSend, onAbort, busy }: InputBarProps) {
         : "输入指令，让 MiMo 编写、修复或执行任务..."
 
   return (
-    <div className="border-t bg-muted/30 px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-2 backdrop-blur sm:border-t-0 sm:bg-transparent sm:p-4">
+    <div className="border-t bg-background/80 px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-2 backdrop-blur sm:border-t-0 sm:bg-transparent sm:p-4">
       <div className="mx-auto flex max-w-4xl flex-col gap-1.5 rounded-2xl border bg-background p-2 shadow-lg shadow-black/5 sm:gap-2 sm:border sm:p-3">
+        {showSlashMenu && (
+          <div className="max-h-48 overflow-auto rounded-xl border bg-popover p-1 shadow-sm">
+            {slashMatches.map((command) => {
+              const Icon = command.mode ? modeConfig[command.mode].icon : FileText
+              return (
+                <button
+                  key={command.name}
+                  type="button"
+                  className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-muted"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => applySlashCommand(command)}
+                >
+                  <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="shrink-0 font-mono text-xs text-primary">{command.name}</span>
+                  <span className="shrink-0 font-medium">{command.label}</span>
+                  <span className="min-w-0 truncate text-xs text-muted-foreground">{command.description}</span>
+                </button>
+              )
+            })}
+          </div>
+        )}
         {attachments.length > 0 && (
           <div className="flex max-h-20 flex-wrap gap-1.5 overflow-y-auto px-1">
             {attachments.map((attachment) => (
@@ -146,7 +210,7 @@ export function InputBar({ onSend, onAbort, busy }: InputBarProps) {
                 <button
                   type="button"
                   onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}
-                  className="ml-0.5 rounded-full p-0.5 hover:bg-background"
+                  className="ml-0.5 rounded-full p-0.5 transition-colors hover:bg-background/80"
                   title="移除"
                 >
                   <X className="h-2.5 w-2.5" />
@@ -168,7 +232,7 @@ export function InputBar({ onSend, onAbort, busy }: InputBarProps) {
                   onClick={() => setMode(m)}
                   title={cfg.title}
                   className={cn(
-                    "flex h-7 items-center gap-1 rounded-full px-1.5 text-xs transition-colors sm:h-8 sm:px-2.5",
+                    "flex h-7 items-center gap-1 rounded-full px-1.5 text-xs transition-all sm:h-8 sm:px-2.5",
                     mode === m ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:bg-muted",
                   )}
                 >
@@ -182,7 +246,7 @@ export function InputBar({ onSend, onAbort, busy }: InputBarProps) {
               title="添加附件"
               disabled={busy}
               onClick={() => fileInputRef.current?.click()}
-              className="flex h-7 items-center rounded-full px-1.5 text-muted-foreground hover:bg-muted sm:h-8 sm:px-2"
+              className="flex h-7 items-center rounded-full px-1.5 text-muted-foreground transition-colors hover:bg-muted disabled:opacity-50 sm:h-8 sm:px-2"
             >
               <Paperclip className="h-3.5 w-3.5" />
             </button>

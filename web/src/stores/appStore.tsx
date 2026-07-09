@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useReducer } from "react"
+import { orderMessages } from "@/lib/messageOrder"
 import type {
   AgentStatus,
   ContextUsage,
@@ -244,7 +245,9 @@ function mergeDuplicateUserMessage(current: Message, next: Message) {
 }
 
 function mergeMessage(current: Message | undefined, next: Message) {
-  if (!current) return next
+  if (!current) {
+    return next
+  }
   const currentContent = current.content ?? ""
   const nextContent = next.content ?? ""
   const keepLongerAssistantContent =
@@ -259,7 +262,7 @@ function mergeMessage(current: Message | undefined, next: Message) {
 }
 
 function normalizeMessages(messages: Message[]) {
-  return messages.reduce<Message[]>((result, message) => {
+  const normalized = messages.reduce<Message[]>((result, message) => {
     const previous = result[result.length - 1]
     if (previous && isDuplicateUserMessage(previous, message)) {
       result[result.length - 1] = mergeDuplicateUserMessage(previous, message)
@@ -267,6 +270,7 @@ function normalizeMessages(messages: Message[]) {
     }
     return [...result, message]
   }, [])
+  return orderMessages(normalized)
 }
 
 function contextUsageFromMessage(message: Message, modelLimits: Record<string, number>): ContextUsage | null {
@@ -449,9 +453,10 @@ function appReducer(state: AppState, action: AppAction): AppState {
       const msgs = state.messages[action.sessionID] || []
       const exists = msgs.some((m) => m.id === action.messageID)
       const nextMessages = exists
-        ? msgs.map((m) =>
-            m.id === action.messageID ? { ...m, content: (m.content || "") + action.content } : m,
-          )
+        ? msgs.map((m) => {
+            if (m.id !== action.messageID) return m
+            return { ...m, content: (m.content || "") + action.content }
+          })
         : [
             ...msgs,
             {
@@ -473,12 +478,15 @@ function appReducer(state: AppState, action: AppAction): AppState {
     case "SET_MESSAGE_CONTENT": {
       const msgs = state.messages[action.sessionID] || []
       const exists = msgs.some((m) => m.id === action.messageID)
-      if (exists && msgs.some((m) => m.id === action.messageID && m.content === action.content)) return state
+      if (exists && msgs.some((m) => m.id === action.messageID && m.content === action.content)) {
+        return state
+      }
       const nextMessages = exists
         ? msgs.map((m) => {
             if (m.id !== action.messageID) return m
             const currentContent = m.content ?? ""
-            return m.role === "assistant" && currentContent.length > action.content.length ? m : { ...m, content: action.content }
+            const keepCurrent = m.role === "assistant" && currentContent.length > action.content.length
+            return keepCurrent ? m : { ...m, content: action.content }
           })
         : [
             ...msgs,
