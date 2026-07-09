@@ -152,6 +152,17 @@ export async function fetchStatus(): Promise<Record<string, unknown>> {
   return response.json()
 }
 
+export async function fetchLocalStatus(): Promise<Record<string, unknown>> {
+  const response = await fetch("/local-status", { headers: getAuthHeaders() })
+  if (response.status === 401) {
+    throw new AuthRequiredError("Authentication required")
+  }
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`)
+  }
+  return response.json()
+}
+
 interface RuntimeModelConfig {
   provider?: Record<
     string,

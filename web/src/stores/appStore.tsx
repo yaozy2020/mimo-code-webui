@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useReducer } from "react"
 import { orderMessages } from "@/lib/messageOrder"
-import { appendMessageContent, setMessageContent } from "./appReducers"
+import { appendMessageContent, mergeMessagePartsWithVisibleAttachments, setMessageContent } from "./appReducers"
 import type {
   AgentStatus,
   ContextUsage,
@@ -240,7 +240,7 @@ function mergeDuplicateUserMessage(current: Message, next: Message) {
     ...fallback,
     ...preferred,
     content: preferred.content ?? fallback.content,
-    parts: preferred.parts ?? fallback.parts,
+    parts: mergeMessagePartsWithVisibleAttachments(preferred.parts, fallback.parts),
     optimistic: preferred.optimistic && fallback.optimistic,
   }
 }
@@ -258,7 +258,7 @@ function mergeMessage(current: Message | undefined, next: Message) {
     ...current,
     ...next,
     content: keepLongerAssistantContent ? current.content : next.content,
-    parts: keepLongerAssistantContent ? current.parts : (next.parts ?? current.parts),
+    parts: keepLongerAssistantContent ? current.parts : mergeMessagePartsWithVisibleAttachments(next.parts, current.parts),
   }
 }
 

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react"
 import ReactMarkdown from "react-markdown"
-import { ChevronDown, ChevronRight, Copy, FileText, Pencil, Terminal, ListTodo, Check, Loader2 } from "lucide-react"
+import { ChevronDown, ChevronRight, Copy, FileText, Pencil, Terminal, ListTodo, Check, Loader2, ImageIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { nextStreamingDisplay } from "@/lib/streamingDisplay"
 import { formatMessageTime } from "@/lib/time"
 import type { Message } from "@/types"
+import { getVisibleAttachments } from "./messageAttachments"
 
 interface MessageBubbleProps {
   message: Message
@@ -82,6 +83,34 @@ function toolDetailSummary(part: NonNullable<Message["parts"]>[number]): string 
 
 function languageFromClassName(className?: string) {
   return className?.match(/language-(\w+)/)?.[1]
+}
+
+function isImagePart(part: NonNullable<Message["parts"]>[number]) {
+  return part.type === "image" || (part.type === "file" && part.mime?.startsWith("image/"))
+}
+
+function partSource(part: NonNullable<Message["parts"]>[number]) {
+  return part.url || part.content || part.text || ""
+}
+
+function AttachmentPreview({ part }: { part: NonNullable<Message["parts"]>[number] }) {
+  const source = partSource(part)
+  const name = part.filename || part.mime || "附件"
+
+  if (isImagePart(part) && source) {
+    return (
+      <a href={source} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-xl border border-primary/15 bg-primary/5">
+        <img src={source} alt={name} className="max-h-64 max-w-full object-contain" />
+      </a>
+    )
+  }
+
+  return (
+    <div className="flex max-w-full items-center gap-2 rounded-xl border border-primary/15 bg-primary/5 px-3 py-2 text-xs text-foreground">
+      {isImagePart(part) ? <ImageIcon className="h-3.5 w-3.5 shrink-0" /> : <FileText className="h-3.5 w-3.5 shrink-0" />}
+      <span className="min-w-0 truncate">{name}</span>
+    </div>
+  )
 }
 
 function AssistantMarkdown({ content }: { content: string }) {
@@ -196,6 +225,7 @@ function CollapsibleTool({ part }: { part: NonNullable<Message["parts"]>[number]
 export function MessageBubble({ message, onCopy }: MessageBubbleProps) {
   const isUser = message.role === "user"
   const toolParts = message.parts?.filter((part) => part.type === "tool") ?? []
+  const attachmentParts = getVisibleAttachments(message)
   const [thinkingOpen, setThinkingOpen] = useState(false)
   const prevOptimisticRef = useRef(message.optimistic)
 
@@ -238,8 +268,17 @@ export function MessageBubble({ message, onCopy }: MessageBubbleProps) {
       <div className="group flex justify-end py-2">
         <div className="flex max-w-[85%] items-start gap-2">
           <div className="min-w-0">
-            <div className="whitespace-pre-wrap break-words rounded-2xl bg-primary px-4 py-2.5 text-sm font-medium leading-relaxed text-primary-foreground shadow-sm [overflow-wrap:anywhere]">
-              {renderedContent || "..."}
+            <div className="flex flex-col items-end gap-2">
+              {attachmentParts.length > 0 && (
+                <div className="flex max-w-full flex-col items-end gap-2">
+                  {attachmentParts.map((part) => <AttachmentPreview key={part.id} part={part} />)}
+                </div>
+              )}
+              {(renderedContent || attachmentParts.length === 0) && (
+                <div className="whitespace-pre-wrap break-words rounded-2xl bg-primary px-4 py-2.5 text-sm font-medium leading-relaxed text-primary-foreground shadow-sm [overflow-wrap:anywhere]">
+                  {renderedContent || "..."}
+                </div>
+              )}
             </div>
             {messageTime && <div className="mt-1 text-right text-[11px] text-muted-foreground">{messageTime}</div>}
           </div>

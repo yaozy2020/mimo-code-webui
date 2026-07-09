@@ -1,4 +1,5 @@
-import { useMimoStatus } from "@/hooks/useMimoStatus"
+import { useEffect, useState } from "react"
+import { fetchLocalStatus } from "@/api/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -8,7 +9,27 @@ interface DiagnosticsPanelProps {
 }
 
 export function DiagnosticsPanel({ onClose }: DiagnosticsPanelProps) {
-  const { data, error, loading } = useMimoStatus(2000)
+  const [state, setState] = useState<{ data: Record<string, unknown> | null; error: Error | null; loading: boolean }>({
+    data: null,
+    error: null,
+    loading: true,
+  })
+
+  useEffect(() => {
+    let cancelled = false
+    fetchLocalStatus()
+      .then((data) => {
+        if (!cancelled) setState({ data, error: null, loading: false })
+      })
+      .catch((error) => {
+        if (!cancelled) setState({ data: null, error: error as Error, loading: false })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const { data, error, loading } = state
 
   const mimo = data?.mimo as Record<string, unknown> | undefined
   const config = data?.config as Record<string, unknown> | undefined
