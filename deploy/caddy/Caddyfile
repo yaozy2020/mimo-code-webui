@@ -1,0 +1,15 @@
+# Replace mimo.example.com with your hostname. Caddy will manage HTTPS
+# automatically when the host resolves to this server.
+mimo.example.com {
+    request_body {
+        max_size 25MB
+    }
+
+    reverse_proxy 127.0.0.1:8080 {
+        flush_interval -1
+        transport http {
+            read_timeout 1h
+            write_timeout 1h
+        }
+    }
+}

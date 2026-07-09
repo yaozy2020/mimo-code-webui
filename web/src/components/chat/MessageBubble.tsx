@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { nextStreamingDisplay } from "@/lib/streamingDisplay"
 import { formatMessageTime } from "@/lib/time"
 import type { Message } from "@/types"
+import { getSafeExternalHref } from "./linkSafety"
 import { getVisibleAttachments } from "./messageAttachments"
 
 interface MessageBubbleProps {
@@ -99,9 +100,9 @@ function AttachmentPreview({ part }: { part: NonNullable<Message["parts"]>[numbe
 
   if (isImagePart(part) && source) {
     return (
-      <a href={source} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-xl border border-primary/15 bg-primary/5">
+      <div className="block overflow-hidden rounded-xl border border-primary/15 bg-primary/5">
         <img src={source} alt={name} className="max-h-64 max-w-full object-contain" />
-      </a>
+      </div>
     )
   }
 
@@ -119,11 +120,17 @@ function AssistantMarkdown({ content }: { content: string }) {
       <ReactMarkdown
         components={{
           p: ({ children }) => <p className="my-3 first:mt-0 last:mb-0">{children}</p>,
-          a: ({ children, href }) => (
-            <a className="font-medium text-blue-600 underline decoration-blue-500/30 underline-offset-4 hover:decoration-blue-600 dark:text-blue-400" href={href} target="_blank" rel="noreferrer">
-              {children}
-            </a>
-          ),
+          a: ({ children, href }) => {
+            const safeHref = getSafeExternalHref(href)
+            if (!safeHref) {
+              return <span className="font-mono text-[0.95em] font-medium text-foreground decoration-transparent">{children}</span>
+            }
+            return (
+              <a className="font-medium text-blue-600 underline decoration-blue-500/30 underline-offset-4 hover:decoration-blue-600 dark:text-blue-400" href={safeHref} target="_blank" rel="noreferrer">
+                {children}
+              </a>
+            )
+          },
           strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
           ul: ({ children }) => <ul className="my-3 list-disc space-y-1.5 pl-6 marker:text-muted-foreground/70">{children}</ul>,
           ol: ({ children }) => <ol className="my-3 list-decimal space-y-2 pl-6 marker:text-muted-foreground">{children}</ol>,
@@ -135,7 +142,7 @@ function AssistantMarkdown({ content }: { content: string }) {
           code: ({ className, children, ...props }) => {
             const language = languageFromClassName(className)
             if (!className) {
-              return <code className="rounded-md border border-border/60 bg-muted px-1.5 py-0.5 font-mono text-[0.9em] text-foreground" {...props}>{children}</code>
+              return <code className="rounded-md border border-slate-300/80 bg-slate-100 px-1.5 py-0.5 font-mono text-[0.9em] text-slate-950 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.7)] dark:border-slate-600/80 dark:bg-slate-800 dark:text-slate-50 dark:shadow-none" {...props}>{children}</code>
             }
             return (
               <code className="block min-w-0 whitespace-pre font-mono" data-language={language} {...props}>

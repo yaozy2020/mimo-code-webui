@@ -30,6 +30,8 @@ Cross-platform web UI for [MiMo-Code](https://github.com/XiaomiMiMo/MiMo-Code).
 2. Start with `./scripts/start.sh` on Linux or `scripts\start.bat` on Windows.
 3. Open the printed WebUI URL in your browser.
 
+For long-running Linux server deployment without Docker, see `docs/deployment.md`. It covers release-package installation, systemd, Nginx, Caddy, upgrades, logs, and rollback.
+
 ## Quick Start From Source
 
 ```bash
@@ -154,11 +156,20 @@ The watchdog only stops a process recorded in its own PID file. It does not kill
 
 ## Operations
 
-See `docs/operations.md` for runtime requirements, config paths, ports, and deployment notes.
+See `docs/operations.md` for runtime requirements, config paths, ports, and runtime notes.
+
+See `docs/deployment.md` for non-Docker production deployment with systemd and optional Nginx or Caddy reverse proxy.
+
+Example deployment files live under `deploy/`:
+
+- `deploy/systemd/mimo-code-webui.service`
+- `deploy/nginx/mimo-code-webui.conf`
+- `deploy/caddy/Caddyfile`
 
 ## More Documentation
 
 - `docs/operations.md` covers runtime configuration, auth, ports, and troubleshooting.
+- `docs/deployment.md` covers release-package deployment, systemd, reverse proxy setup, upgrades, and rollback.
 - `docs/testing.md` covers verification commands.
 - `docs/architecture.md` explains the frontend/backend/MiMo process boundaries.
 

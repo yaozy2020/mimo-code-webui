@@ -16,7 +16,7 @@ function copy(src, dest = src) {
 fs.rmSync(stage, { recursive: true, force: true })
 fs.mkdirSync(stage, { recursive: true })
 
-for (const required of ["web/dist", "server/dist", "package.json", "package-lock.json", "README.md"]) {
+for (const required of ["web/dist", "server/dist", "package.json", "package-lock.json", "README.md", "docs/deployment.md", "deploy"]) {
   if (!fs.existsSync(path.join(root, required))) throw new Error(`Missing required release input: ${required}`)
 }
 
@@ -31,6 +31,8 @@ copy("scripts/start.bat")
 copy("README.md")
 if (fs.existsSync(path.join(root, "docs/operations.md"))) copy("docs/operations.md")
 if (fs.existsSync(path.join(root, "docs/testing.md"))) copy("docs/testing.md")
+copy("docs/deployment.md")
+copy("deploy")
 
 fs.rmSync(archive, { force: true })
 const result = spawnSync("tar", ["-czf", archive, "-C", outDir, path.basename(stage)], { stdio: "inherit" })

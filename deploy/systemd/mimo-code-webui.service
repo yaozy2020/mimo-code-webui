@@ -1,0 +1,25 @@
+[Unit]
+Description=MiMo Code WebUI
+Documentation=https://github.com/yaozy2020/mimo-code-webui
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mimo-webui
+Group=mimo-webui
+WorkingDirectory=/opt/mimo-code-webui/current
+EnvironmentFile=-/etc/mimo-code-webui/webui.env
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=PORT=8080
+Environment=MIMO_HOST=127.0.0.1
+Environment=MIMO_PORT=4096
+ExecStart=/opt/mimo-code-webui/current/scripts/start.sh
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
