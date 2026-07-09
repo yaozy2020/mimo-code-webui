@@ -6,6 +6,7 @@ import { createApp } from "./app.js"
 import { assertSafeAuthPolicy } from "./authPolicy.js"
 import { addMimoModelConfig, getProjectRoot, listManualModels, migrateLegacyMimoConfig, readMimoConfig, resolveOpenAICompatibleModel } from "./config.js"
 import { checkHealth, detectMimo, ensureMimoServerForDirectory, listBuiltinModels, listManagedMimoServers, probeNativeModel, runMimoPrompt, startMimoServer, stopManagedMimoServers, stopMimoServer } from "./mimo.js"
+import { createMimoSupervisor } from "./mimoSupervisor.js"
 import { streamOpenAICompatible } from "./openaiStream.js"
 import { createRoutedMimoProxy } from "./proxy.js"
 
@@ -71,13 +72,6 @@ async function main() {
   assertSafeAuthPolicy({ host: HOST, authToken: AUTH_TOKEN, allowUnauthenticatedLan: ALLOW_UNAUTHENTICATED_LAN })
   const port = await findAvailablePort(PREFERRED_PORT, HOST, PORT_EXPLICITLY_SET)
 
-  // Base MiMo serve state. We keep this as a mutable object so proxies/status can see updates after a restart.
-  const mimoInfo: { url: string; port: number; pid: number } = {
-    url: `http://${MIMO_HOST}:${MIMO_PREFERRED_PORT}`,
-    port: MIMO_PREFERRED_PORT,
-    pid: 0,
-  }
-  let mimoStartedByUs = false
   let shuttingDown = false
   let restartTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -113,31 +107,31 @@ async function main() {
     return null
   }
 
-  async function startManagedBaseMimo(): Promise<boolean> {
-    if (shuttingDown) return false
+  async function startManagedBaseMimo(host: string, port: number, workspaceRoot: string) {
+    if (shuttingDown) throw new Error("WebUI server is shutting down")
     const mimo = detectMimo()
     if (!mimo) {
       console.warn("[server] mimo CLI not found. WebUI will start but API calls will fail until mimo serve is available.")
-      return false
+      throw new Error("MiMo-Code CLI (mimo) not found")
     }
 
-    try {
-      const port = await findAvailableMimoPort()
-      mimoInfo.url = `http://${MIMO_HOST}:${port}`
-      mimoInfo.port = port
-      console.log(`[server] starting mimo serve on ${MIMO_HOST}:${port} with workspace root ${MIMO_WORKSPACE_ROOT}...`)
-      const info = await startMimoServer(MIMO_HOST, port, MIMO_WORKSPACE_ROOT)
-      mimoInfo.url = info.url
-      mimoInfo.port = info.port
-      mimoInfo.pid = info.pid
-      mimoStartedByUs = true
-      console.log(`[server] mimo serve ready at ${mimoInfo.url} (pid ${mimoInfo.pid})`)
-      return true
-    } catch (error) {
-      console.error("[server] failed to start mimo serve:", error)
-      return false
-    }
+    console.log(`[server] starting mimo serve on ${host}:${port} with workspace root ${workspaceRoot}...`)
+    const info = await startMimoServer(host, port, workspaceRoot)
+    console.log(`[server] mimo serve ready at ${info.url} (pid ${info.pid})`)
+    return info
   }
+
+  const supervisor = createMimoSupervisor({
+    host: MIMO_HOST,
+    preferredPort: MIMO_PREFERRED_PORT,
+    workspaceRoot: MIMO_WORKSPACE_ROOT,
+    findExistingPort: () => findExistingMimoPort(MIMO_PREFERRED_PORT, MIMO_HOST),
+    findAvailablePort: findAvailableMimoPort,
+    startServer: startManagedBaseMimo,
+    stopServer: stopMimoServer,
+    stopManagedServers: stopManagedMimoServers,
+    listManagedServers: listManagedMimoServers,
+  })
 
   async function restartBaseMimo(delayMs = 3000) {
     if (shuttingDown) return
@@ -146,36 +140,24 @@ async function main() {
       restartTimer = null
       if (shuttingDown) return
       console.warn("[server] base mimo serve appears unhealthy, restarting...")
-      try {
-        await stopMimoServer()
-      } catch (error) {
-        console.warn("[server] error stopping old mimo serve:", error)
-      }
-      await startManagedBaseMimo()
+      const result = await supervisor.restartBase()
+      if (!result.ok) console.warn(`[server] failed to restart base mimo serve: ${result.error}`)
     }, delayMs)
   }
 
-  // Try to detect an existing mimo serve on nearby ports first. This avoids
-  // spawning a second instance when the user already runs `mimo serve`.
-  const existingPort = await findExistingMimoPort(MIMO_PREFERRED_PORT, MIMO_HOST)
-  if (existingPort !== null) {
-    mimoInfo.url = `http://${MIMO_HOST}:${existingPort}`
-    mimoInfo.port = existingPort
-    console.log(`[server] using existing mimo serve at ${mimoInfo.url}`)
-  } else {
-    await startManagedBaseMimo()
-  }
+  await supervisor.ensureBase()
 
   // Health monitor: if we manage the base mimo, restart it when it goes down
   const healthInterval = setInterval(async () => {
-    if (!mimoStartedByUs || shuttingDown) return
-    const health = await checkHealth(mimoInfo.url)
+    const status = supervisor.status()
+    if (!status.managed || shuttingDown) return
+    const health = await checkHealth(status.base.url)
     if (!health.healthy) {
       await restartBaseMimo()
     }
   }, MIMO_HEALTH_INTERVAL_MS)
 
-  const proxy = createRoutedMimoProxy(async () => mimoInfo.url)
+  const proxy = createRoutedMimoProxy(async () => supervisor.status().base.url)
 
   const webDist = path.resolve(__dirname, "../../web/dist")
   const app = createApp({
@@ -183,24 +165,19 @@ async function main() {
     host: HOST,
     port,
     workspaceRoot: MIMO_WORKSPACE_ROOT,
-    mimoInfo,
-    isMimoManaged: () => mimoStartedByUs,
+    mimoInfo: supervisor.status().base,
+    isMimoManaged: () => supervisor.status().managed,
     checkHealth,
     getMimoPathInfo,
-    listManagedMimoServers,
+    listManagedMimoServers: () => supervisor.status().projectServers,
     readMimoConfig,
     listManualModels,
     listBuiltinModels,
     addMimoModelConfig,
     probeNativeModel: (input) => probeNativeModel(input),
     restartMimo: async () => {
-      if (!mimoStartedByUs) {
-        return { ok: false, error: "MiMo serve is not managed by this WebUI process. Please restart the WebUI service manually." }
-      }
       console.log("[server] restarting base mimo serve via WebUI request")
-      await stopMimoServer()
-      const ok = await startManagedBaseMimo()
-      return ok ? { ok: true, url: mimoInfo.url } : { ok: false, error: "Failed to restart mimo serve" }
+      return supervisor.restartBase()
     },
     runMimoPrompt,
     resolveOpenAICompatibleModel,
@@ -227,10 +204,7 @@ async function main() {
     }
     clearInterval(healthInterval)
     server.close()
-    if (mimoStartedByUs) {
-      await stopMimoServer()
-    }
-    await stopManagedMimoServers()
+    await supervisor.stopAll()
     process.exit(0)
   }
 

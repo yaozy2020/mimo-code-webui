@@ -156,6 +156,12 @@ The watchdog only stops a process recorded in its own PID file. It does not kill
 
 See `docs/operations.md` for runtime requirements, config paths, ports, and deployment notes.
 
+## More Documentation
+
+- `docs/operations.md` covers runtime configuration, auth, ports, and troubleshooting.
+- `docs/testing.md` covers verification commands.
+- `docs/architecture.md` explains the frontend/backend/MiMo process boundaries.
+
 ## License
 
 MIT

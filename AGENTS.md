@@ -14,14 +14,15 @@
 - Build with `npm run build`; this runs `web` first, then `server`.
 - Typecheck with `npm run typecheck`, or focus with `npm run typecheck -w server` / `npm run typecheck -w web`.
 - Start production with `npm start` after building, or use `./scripts/start.sh` on Linux / `scripts\start.bat` on Windows to auto-install missing deps and build missing frontend output; the build script emits both `web/dist` and `server/dist`.
-- There are no repo test or lint scripts in `package.json`; use `npm run typecheck` and `npm run build` as the available verification gates.
+- Run `npm run verify` before claiming completion for cross-cutting changes; it runs focused regression tests, typecheck, and build.
+- For smaller focused checks, use package typechecks or the specific `node --import tsx ...test.mjs` file listed in `package.json`.
 
 ## Runtime Notes
 - Node.js `>=18` and the MiMo-Code CLI (`mimo`) are required for a fully working backend.
-- Backend defaults: `HOST=0.0.0.0`, `PORT=8080`, `MIMO_HOST=127.0.0.1`, `MIMO_PORT=4096`.
+- Backend defaults: `HOST=127.0.0.1`, `PORT=8080`, `MIMO_HOST=127.0.0.1`, `MIMO_PORT=4096`.
 - If `PORT` is unset and `8080` is busy, the backend auto-increments; if `PORT` is explicitly set and busy, startup fails.
 - Setting `AUTH_TOKEN` protects `/api/*` with `Authorization: Bearer <token>`; `/status` and static frontend assets stay public so the login UI can load.
-- Server status exposes MiMo config from `~/.mimo/mimo.config.json`; frontend settings and the WebUI auth token are stored in browser `localStorage`.
+- The primary MiMo config path is `~/.config/mimocode/config.json`; a readable legacy `~/.mimo/mimo.config.json` is migrated only when the primary path is missing or empty.
 
 ## Frontend Conventions
 - UI is React 18 + TypeScript + Vite + Tailwind + shadcn/ui; shadcn config is `web/components.json` with `baseColor: slate` and CSS variables enabled.
