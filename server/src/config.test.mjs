@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { addMimoModelConfig, resolveOpenAICompatibleModel } from "./config.ts"
+import { addMimoModelConfig, migrateLegacyMimoConfig, resolveOpenAICompatibleModel } from "./config.ts"
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "mimo-config-test-"))
 const configPath = path.join(tempDir, "config.json")
@@ -60,8 +60,33 @@ try {
     "runtime model resolution should reject private network baseUrl hosts",
   )
 
+  assert.throws(
+    () => addMimoModelConfig({ providerID: "loopback", modelID: "probe", baseUrl: "https://127.0.0.1/v1" }),
+    /baseUrl host is not allowed/i,
+  )
+  assert.throws(
+    () => addMimoModelConfig({ providerID: "ipv6", modelID: "probe", baseUrl: "https://[::1]/v1" }),
+    /baseUrl host is not allowed/i,
+  )
+  assert.equal(
+    addMimoModelConfig({ providerID: "public", modelID: "probe", baseUrl: "https://api.example.com/v1/" }).baseUrl,
+    "https://api.example.com/v1",
+  )
+
+  const legacyDir = path.join(tempDir, "legacy")
+  const legacyPath = path.join(legacyDir, "mimo.config.json")
+  process.env.MIMO_LEGACY_CONFIG_PATH = legacyPath
+  fs.rmSync(configPath, { force: true })
+  fs.mkdirSync(legacyDir, { recursive: true })
+  fs.writeFileSync(legacyPath, JSON.stringify({ provider: { legacy: { models: { model: { name: "Legacy" } } } } }), "utf-8")
+
+  migrateLegacyMimoConfig()
+  const migrated = JSON.parse(fs.readFileSync(configPath, "utf-8"))
+  assert.equal(migrated.provider.legacy.models.model.name, "Legacy")
+
   console.log("config tests passed")
 } finally {
   delete process.env.MIMO_CONFIG_PATH
+  delete process.env.MIMO_LEGACY_CONFIG_PATH
   fs.rmSync(tempDir, { recursive: true, force: true })
 }

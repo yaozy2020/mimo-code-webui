@@ -7,6 +7,7 @@ node_modules/
 # Build outputs
 web/dist/
 server/dist/
+dist-release/
 *.tsbuildinfo
 
 # Logs

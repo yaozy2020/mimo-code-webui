@@ -19,12 +19,28 @@ Cross-platform web UI for [MiMo-Code](https://github.com/XiaomiMiMo/MiMo-Code).
 - **Backend**: Node.js + Express
 - **Engine**: MiMo-Code `mimo serve` process managed by the backend
 
-## Quick Start
+## Quick Start From Release Package
 
 ### Requirements
 
 - Node.js 18+
 - MiMo-Code CLI (`mimo`) installed
+
+1. Download and extract `mimo-code-webui-v0.1.0.tar.gz`.
+2. Start with `./scripts/start.sh` on Linux or `scripts\start.bat` on Windows.
+3. Open the printed WebUI URL in your browser.
+
+## Quick Start From Source
+
+```bash
+npm install
+npm run build
+npm start
+```
+
+Then open http://localhost:8080 in your browser. If port 8080 is already in use, the server will automatically try 8081, 8082, and so on.
+
+## Start Scripts
 
 ### Linux
 
@@ -38,11 +54,19 @@ Cross-platform web UI for [MiMo-Code](https://github.com/XiaomiMiMo/MiMo-Code).
 scripts\start.bat
 ```
 
-Then open http://localhost:8080 in your browser. If port 8080 is already in use, the server will automatically try 8081, 8082, and so on.
-
 ### LAN Access
 
-The backend binds to `0.0.0.0` by default, so the WebUI is also reachable from other devices on the same network via the server's IP address:
+The backend binds to `127.0.0.1` by default. To reach the WebUI from other devices on the same network, bind to `0.0.0.0` and set `AUTH_TOKEN`:
+
+```bash
+AUTH_TOKEN=replace-with-a-random-token HOST=0.0.0.0 ./scripts/start.sh
+```
+
+Unauthenticated LAN mode is only for trusted temporary testing:
+
+```bash
+ALLOW_UNAUTHENTICATED_LAN=true HOST=0.0.0.0 ./scripts/start.sh
+```
 
 ```bash
 # On the server, find your LAN IP first
@@ -100,11 +124,13 @@ API Key, Base URL, Model, and WebUI Auth Token can be configured in the Settings
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `HOST` | `0.0.0.0` | Address the Express backend binds to. Use `127.0.0.1` to restrict to localhost. |
+| `HOST` | `127.0.0.1` | Address the Express backend binds to. Use `0.0.0.0` for LAN access with `AUTH_TOKEN` set. |
 | `PORT` | `8080` | Port the WebUI backend listens on. If not set and 8080 is in use, the server automatically finds the next available port. If explicitly set and in use, the server exits with an error. |
 | `MIMO_HOST` | `127.0.0.1` | Address the managed `mimo serve` process binds to. Only the backend talks to it; keep it on localhost unless you know what you are doing. |
 | `MIMO_PORT` | `4096` | Port the managed `mimo serve` process listens on. |
 | `AUTH_TOKEN` | *(none)* | If set, all `/api/*` requests must include `Authorization: Bearer <AUTH_TOKEN>`. |
+
+The primary MiMo config path is `~/.config/mimocode/config.json`. On startup, the WebUI migrates a readable legacy `~/.mimo/mimo.config.json` into the primary path only when the primary path is missing or empty. See `docs/operations.md` for runtime configuration and migration details.
 
 ### Optional MiMo Watchdog
 
@@ -126,14 +152,9 @@ Useful environment variables:
 
 The watchdog only stops a process recorded in its own PID file. It does not kill arbitrary `mimo serve` processes on the same port, so a manually started instance remains under your control.
 
-You can also pre-configure MiMo-Code via `~/.mimo/mimo.config.json`:
+## Operations
 
-```json
-{
-  "apiKey": "YOUR_MIMO_API_KEY",
-  "baseUrl": "https://token-plan-sgp.xiaomimimo.com/anthropic"
-}
-```
+See `docs/operations.md` for runtime requirements, config paths, ports, and deployment notes.
 
 ## License
 

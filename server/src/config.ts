@@ -65,6 +65,9 @@ export function getMimoConfigPath(): string {
 }
 
 export function getLegacyMimoConfigPath(): string {
+  if (process.env.MIMO_LEGACY_CONFIG_PATH) {
+    return process.env.MIMO_LEGACY_CONFIG_PATH
+  }
   const home = os.homedir()
   return path.join(home, ".mimo", "mimo.config.json")
 }
@@ -156,7 +159,7 @@ function validateOpenAIBaseUrl(value: string): string {
   }
   if (url.protocol !== "https:") throw new Error("baseUrl must use https")
 
-  const hostname = url.hostname.toLowerCase()
+  const hostname = url.hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, "")
   if (hostname === "localhost" || hostname.endsWith(".localhost")) throw new Error("baseUrl host is not allowed")
   const ipVersion = net.isIP(hostname)
   if ((ipVersion === 4 && isPrivateIPv4(hostname)) || (ipVersion === 6 && isPrivateIPv6(hostname))) {

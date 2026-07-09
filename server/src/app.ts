@@ -6,9 +6,11 @@ import path from "node:path"
 import type { ManualModelInput } from "./config.js"
 import type { OpenAIStreamHandlers, OpenAIStreamInput, OpenAIStreamModel } from "./openaiStream.js"
 import { createPublicConfigSummary } from "./status.js"
+import { validateWorkspaceDirectory } from "./workspacePolicy.js"
 
 type MimoInfo = { url: string; port: number; pid: number }
 type HandlerResult<T> = T | Promise<T>
+const MAX_LOCAL_PROMPT_LENGTH = 50000
 
 export interface AppOptions {
   authToken?: string
@@ -61,11 +63,11 @@ export function createApp(options: AppOptions) {
     express.json()(req, res, next)
   })
 
-  app.get("/status", async (req, res) => {
+  const createDetailedStatus = async (req: Request) => {
     const health = await options.checkHealth(options.mimoInfo.url)
     const pathInfo = health.healthy ? await options.getMimoPathInfo(options.mimoInfo.url) : null
     const hostHeader = req.headers.host || `${options.host}:${options.port}`
-    res.json({
+    return {
       webui: { port: options.port, host: options.host, url: `http://${hostHeader}` },
       mimo: {
         ...options.mimoInfo,
@@ -78,7 +80,20 @@ export function createApp(options: AppOptions) {
       },
       config: createPublicConfigSummary(options.readMimoConfig()),
       authRequired: !!options.authToken,
+    }
+  }
+
+  app.get("/status", async (_req, res) => {
+    const health = await options.checkHealth(options.mimoInfo.url)
+    res.json({
+      webui: { port: options.port, host: options.host },
+      mimo: { healthy: health.healthy, version: health.version },
+      authRequired: !!options.authToken,
     })
+  })
+
+  app.get("/local-status", authMiddleware, async (req, res) => {
+    res.json(await createDetailedStatus(req))
   })
 
   app.use("/local-config", authMiddleware)
@@ -128,6 +143,10 @@ export function createApp(options: AppOptions) {
         res.status(400).json({ error: "model and prompt are required" })
         return
       }
+      if (prompt.length > MAX_LOCAL_PROMPT_LENGTH) {
+        res.status(413).json({ error: "prompt is too large" })
+        return
+      }
       res.json(await options.runMimoPrompt({ model, prompt }))
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : String(error) })
@@ -139,6 +158,10 @@ export function createApp(options: AppOptions) {
       res.status(400).json({ error: "model and prompt are required" })
       return
     }
+    if (prompt.length > MAX_LOCAL_PROMPT_LENGTH) {
+      res.status(413).json({ error: "prompt is too large" })
+      return
+    }
 
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
@@ -148,6 +171,7 @@ export function createApp(options: AppOptions) {
 
     const send = (event: unknown) => res.write(`data: ${JSON.stringify(event)}\n\n`)
     const abort = new AbortController()
+    const timeout = setTimeout(() => abort.abort(), 120000)
     req.on("aborted", () => abort.abort())
 
     try {
@@ -164,6 +188,7 @@ export function createApp(options: AppOptions) {
     } catch (error) {
       if (!abort.signal.aborted) send({ type: "error", error: error instanceof Error ? error.message : String(error) })
     } finally {
+      clearTimeout(timeout)
       res.end()
     }
   })
@@ -175,6 +200,16 @@ export function createApp(options: AppOptions) {
 
   if (options.proxy) {
     app.use("/api", authMiddleware)
+    app.use("/api", (req, res, next) => {
+      const directory = req.query.directory
+      if (typeof directory !== "string" || !directory.trim()) return next()
+      try {
+        validateWorkspaceDirectory(directory.trim(), options.workspaceRoot)
+        next()
+      } catch (error) {
+        res.status(400).json({ error: error instanceof Error ? error.message : String(error) })
+      }
+    })
     app.use("/api", options.proxy)
   }
 

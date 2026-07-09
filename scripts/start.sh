@@ -6,10 +6,11 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 cd "$PROJECT_DIR"
 
-# Run as the interactive user so WebUI and mimo serve share the same config/state.
-# This requires ACL/write access for the service account; if unavailable, fall
-# back to the project-local .mimo-home directory.
-export HOME="${MIMO_HOME:-/home/yzy}"
+# Use the invoking user's HOME by default. Set MIMO_HOME only when a service
+# account must intentionally share a different MiMo config/state directory.
+if [ -n "${MIMO_HOME:-}" ]; then
+  export HOME="$MIMO_HOME"
+fi
 export MIMO_CONFIG_PATH="${MIMO_CONFIG_PATH:-$HOME/.config/mimocode/config.json}"
 # Use the directory that contains the WebUI project as the default workspace root
 # so users can create sessions in sibling directories, not just inside the webui folder.
@@ -68,6 +69,13 @@ if ! "$NODE_BIN" --version &> /dev/null; then
   echo "Error: $NODE_BIN is not executable."
   exit 1
 fi
+
+if ! command -v npm &> /dev/null; then
+  echo "Error: npm is not available in PATH. Install npm or use a prebuilt release package."
+  exit 1
+fi
+
+echo "[start] using npm: $(command -v npm)"
 
 if [ ! -d "node_modules" ] || [ ! -d "web/node_modules" ] || [ ! -d "server/node_modules" ]; then
   echo "Installing dependencies..."

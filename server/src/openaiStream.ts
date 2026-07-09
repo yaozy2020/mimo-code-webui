@@ -37,6 +37,7 @@ export async function streamOpenAICompatible(input: OpenAIStreamInput, handlers:
     method: "POST",
     headers,
     signal: input.signal,
+    redirect: "error",
     body: JSON.stringify({
       model: input.model.modelID,
       messages: [{ role: "user", content: input.prompt }],

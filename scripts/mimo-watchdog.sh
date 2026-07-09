@@ -6,8 +6,10 @@ set -euo pipefail
 # restarted yet. The WebUI backend's built-in health monitor is the preferred
 # path for normal production runs.
 
-export HOME="${HOME:-/home/yzy}"
-export MIMO_CONFIG_PATH="${MIMO_CONFIG_PATH:-/home/yzy/.config/mimocode/config.json}"
+if [ -n "${MIMO_HOME:-}" ]; then
+  export HOME="$MIMO_HOME"
+fi
+export MIMO_CONFIG_PATH="${MIMO_CONFIG_PATH:-$HOME/.config/mimocode/config.json}"
 
 HOST="${MIMO_HOST:-127.0.0.1}"
 PORT="${MIMO_PORT:-4096}"

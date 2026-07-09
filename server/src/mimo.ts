@@ -5,6 +5,7 @@ import path from "node:path"
 import { promisify } from "node:util"
 import { execFile, spawn as nodeSpawn, type ChildProcess } from "node:child_process"
 import crossSpawn, { spawn } from "cross-spawn"
+import { validateWorkspaceDirectory } from "./workspacePolicy.js"
 
 const sleep = promisify(setTimeout)
 
@@ -26,19 +27,6 @@ const managedInstances = new Map<string, ManagedMimoInstance>()
 const pendingInstances = new Map<string, Promise<MimoServerInfo>>()
 const reservedManagedPorts = new Set<number>()
 let nextManagedPort = 0
-
-function normalizeDirectory(directory: string) {
-  return path.resolve(directory)
-}
-
-function assertUsableDirectory(directory: string) {
-  try {
-    if (fs.statSync(directory).isDirectory()) return
-  } catch {
-    // Fall through to a user-facing error below.
-  }
-  throw new Error(`Workspace directory does not exist: ${directory}`)
-}
 
 function isPortAvailable(port: number, host: string): Promise<boolean> {
   return new Promise((resolve) => {
@@ -311,9 +299,8 @@ export async function startMimoServer(hostname = "127.0.0.1", port = 4096, works
   })
 }
 
-export async function ensureMimoServerForDirectory(hostname: string, preferredPort: number, directory: string): Promise<MimoServerInfo> {
-  const normalized = normalizeDirectory(directory)
-  assertUsableDirectory(normalized)
+export async function ensureMimoServerForDirectory(hostname: string, preferredPort: number, directory: string, workspaceRoot = process.cwd()): Promise<MimoServerInfo> {
+  const normalized = validateWorkspaceDirectory(directory, workspaceRoot)
 
   const existing = managedInstances.get(normalized)
   if (existing && !existing.process.killed) {

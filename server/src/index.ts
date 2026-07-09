@@ -3,6 +3,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import type { Request } from "express"
 import { createApp } from "./app.js"
+import { assertSafeAuthPolicy } from "./authPolicy.js"
 import { addMimoModelConfig, getProjectRoot, listManualModels, migrateLegacyMimoConfig, readMimoConfig, resolveOpenAICompatibleModel } from "./config.js"
 import { checkHealth, detectMimo, ensureMimoServerForDirectory, listBuiltinModels, listManagedMimoServers, probeNativeModel, runMimoPrompt, startMimoServer, stopManagedMimoServers, stopMimoServer } from "./mimo.js"
 import { streamOpenAICompatible } from "./openaiStream.js"
@@ -13,11 +14,12 @@ const __dirname = path.dirname(__filename)
 
 const PREFERRED_PORT = Number(process.env.PORT) || 8080
 const PORT_EXPLICITLY_SET = process.env.PORT !== undefined
-const HOST = process.env.HOST || "0.0.0.0"
+const HOST = process.env.HOST || "127.0.0.1"
 const MIMO_HOST = process.env.MIMO_HOST || "127.0.0.1"
 const MIMO_PREFERRED_PORT = Number(process.env.MIMO_PORT) || 4096
 const MIMO_PORT_EXPLICITLY_SET = process.env.MIMO_PORT !== undefined
 const AUTH_TOKEN = process.env.AUTH_TOKEN
+const ALLOW_UNAUTHENTICATED_LAN = process.env.ALLOW_UNAUTHENTICATED_LAN === "true"
 const MIMO_WORKSPACE_ROOT = path.resolve(process.env.MIMO_WORKSPACE_ROOT || getProjectRoot())
 const MIMO_HEALTH_INTERVAL_MS = Number(process.env.MIMO_HEALTH_INTERVAL_MS) || 10000
 
@@ -65,6 +67,8 @@ function requestDirectory(req: Request): string | undefined {
 }
 
 async function main() {
+  migrateLegacyMimoConfig()
+  assertSafeAuthPolicy({ host: HOST, authToken: AUTH_TOKEN, allowUnauthenticatedLan: ALLOW_UNAUTHENTICATED_LAN })
   const port = await findAvailablePort(PREFERRED_PORT, HOST, PORT_EXPLICITLY_SET)
 
   // Base MiMo serve state. We keep this as a mutable object so proxies/status can see updates after a restart.

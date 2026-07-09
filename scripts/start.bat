@@ -18,7 +18,25 @@ if not exist "node_modules\*" (
   if errorlevel 1 exit /b 1
 )
 
+if not exist "web\node_modules\*" (
+  echo Installing dependencies...
+  call npm install
+  if errorlevel 1 exit /b 1
+)
+
+if not exist "server\node_modules\*" (
+  echo Installing dependencies...
+  call npm install
+  if errorlevel 1 exit /b 1
+)
+
 if not exist "web\dist\*" (
+  echo Building project...
+  call npm run build
+  if errorlevel 1 exit /b 1
+)
+
+if not exist "server\dist\index.js" (
   echo Building project...
   call npm run build
   if errorlevel 1 exit /b 1
