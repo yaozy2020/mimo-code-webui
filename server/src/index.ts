@@ -1,15 +1,12 @@
-import cors from "cors"
-import crypto from "node:crypto"
-import express, { type Request, type Response, type NextFunction } from "express"
-import fs from "node:fs"
 import net from "node:net"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import type { Request } from "express"
+import { createApp } from "./app.js"
 import { addMimoModelConfig, getProjectRoot, listManualModels, migrateLegacyMimoConfig, readMimoConfig, resolveOpenAICompatibleModel } from "./config.js"
 import { checkHealth, detectMimo, ensureMimoServerForDirectory, listBuiltinModels, listManagedMimoServers, probeNativeModel, runMimoPrompt, startMimoServer, stopManagedMimoServers, stopMimoServer } from "./mimo.js"
 import { streamOpenAICompatible } from "./openaiStream.js"
 import { createRoutedMimoProxy } from "./proxy.js"
-import { createPublicConfigSummary } from "./status.js"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -52,22 +49,6 @@ async function findAvailablePort(preferred: number, host: string, explicit: bool
   throw new Error(`Could not find an available port between ${preferred} and ${preferred + maxAttempts - 1}`)
 }
 
-function authMiddleware(req: Request, res: Response, next: NextFunction) {
-  if (!AUTH_TOKEN) return next()
-
-  const auth = req.headers.authorization
-  if (!auth || !auth.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Unauthorized", authRequired: true })
-  }
-
-  const token = auth.slice(7)
-  if (!AUTH_TOKEN || token.length !== AUTH_TOKEN.length || !crypto.timingSafeEqual(Buffer.from(token), Buffer.from(AUTH_TOKEN))) {
-    return res.status(401).json({ error: "Invalid token", authRequired: true })
-  }
-
-  next()
-}
-
 async function getMimoPathInfo(baseUrl: string): Promise<Record<string, unknown> | null> {
   try {
     const response = await fetch(`${baseUrl}/path`)
@@ -84,14 +65,6 @@ function requestDirectory(req: Request): string | undefined {
 }
 
 async function main() {
-  const app = express()
-  app.use(cors({ origin: false }))
-  // Only parse JSON for non-/api routes; /api is proxied to mimo serve and needs the raw body
-  app.use((req, res, next) => {
-    if (req.path.startsWith("/api")) return next()
-    express.json()(req, res, next)
-  })
-
   const port = await findAvailablePort(PREFERRED_PORT, HOST, PORT_EXPLICITLY_SET)
 
   // Base MiMo serve state. We keep this as a mutable object so proxies/status can see updates after a restart.
@@ -200,141 +173,37 @@ async function main() {
 
   const proxy = createRoutedMimoProxy(async () => mimoInfo.url)
 
-  // Public status endpoint (no auth) so frontend can detect if auth is required
-  app.get("/status", async (req, res) => {
-    const health = await checkHealth(mimoInfo.url)
-    const pathInfo = health.healthy ? await getMimoPathInfo(mimoInfo.url) : null
-    const hostHeader = req.headers.host || `${HOST}:${port}`
-    res.json({
-      webui: { port, host: HOST, url: `http://${hostHeader}` },
-      mimo: {
-        ...mimoInfo,
-        healthy: health.healthy,
-        version: health.version,
-        managed: mimoStartedByUs,
-        workspaceRoot: MIMO_WORKSPACE_ROOT,
-        projectServers: listManagedMimoServers(),
-        path: pathInfo,
-      },
-      config: createPublicConfigSummary(readMimoConfig()),
-      authRequired: !!AUTH_TOKEN,
-    })
-  })
-
-  app.use("/local-config", authMiddleware)
-  app.use("/local-run", authMiddleware)
-  app.get("/local-config/models", (_req, res) => {
-    res.json({ models: listManualModels() })
-  })
-  app.get("/local-config/model-templates", async (_req, res) => {
-    res.json({ models: await listBuiltinModels() })
-  })
-  app.post("/local-config/models", (req, res) => {
-    try {
-      const model = addMimoModelConfig(req.body as Parameters<typeof addMimoModelConfig>[0])
-      res.json({ model })
-    } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : String(error) })
-    }
-  })
-  app.post("/local-config/native-model-probe", async (req, res) => {
-    try {
-      const { model } = req.body as { model?: string }
-      if (!model) {
-        res.status(400).json({ error: "model is required" })
-        return
-      }
-      res.json(await probeNativeModel({ baseUrl: mimoInfo.url, model }))
-    } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : String(error) })
-    }
-  })
-  app.post("/local-config/restart-mimo", async (_req, res) => {
-    try {
+  const webDist = path.resolve(__dirname, "../../web/dist")
+  const app = createApp({
+    authToken: AUTH_TOKEN,
+    host: HOST,
+    port,
+    workspaceRoot: MIMO_WORKSPACE_ROOT,
+    mimoInfo,
+    isMimoManaged: () => mimoStartedByUs,
+    checkHealth,
+    getMimoPathInfo,
+    listManagedMimoServers,
+    readMimoConfig,
+    listManualModels,
+    listBuiltinModels,
+    addMimoModelConfig,
+    probeNativeModel: (input) => probeNativeModel(input),
+    restartMimo: async () => {
       if (!mimoStartedByUs) {
-        res.status(400).json({ error: "MiMo serve is not managed by this WebUI process. Please restart the WebUI service manually." })
-        return
+        return { ok: false, error: "MiMo serve is not managed by this WebUI process. Please restart the WebUI service manually." }
       }
       console.log("[server] restarting base mimo serve via WebUI request")
       await stopMimoServer()
       const ok = await startManagedBaseMimo()
-      if (!ok) {
-        res.status(500).json({ error: "Failed to restart mimo serve" })
-        return
-      }
-      res.json({ ok: true, url: mimoInfo.url })
-    } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : String(error) })
-    }
+      return ok ? { ok: true, url: mimoInfo.url } : { ok: false, error: "Failed to restart mimo serve" }
+    },
+    runMimoPrompt,
+    resolveOpenAICompatibleModel,
+    streamOpenAICompatible,
+    proxy,
+    webDist,
   })
-  app.post("/local-run", async (req, res) => {
-    try {
-      const { model, prompt } = req.body as { model?: string; prompt?: string }
-      if (!model || !prompt) {
-        res.status(400).json({ error: "model and prompt are required" })
-        return
-      }
-      res.json(await runMimoPrompt({ model, prompt }))
-    } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : String(error) })
-    }
-  })
-  app.post("/local-run/stream", async (req, res) => {
-    const { model, prompt } = req.body as { model?: string; prompt?: string }
-    if (!model || !prompt) {
-      res.status(400).json({ error: "model and prompt are required" })
-      return
-    }
-
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-    })
-
-    const send = (event: unknown) => res.write(`data: ${JSON.stringify(event)}\n\n`)
-    const abort = new AbortController()
-    req.on("aborted", () => abort.abort())
-
-    try {
-      const config = resolveOpenAICompatibleModel(model)
-      await streamOpenAICompatible(
-        { model: config, prompt, signal: abort.signal },
-        {
-          onStart: () => send({ type: "start" }),
-          onDelta: (text) => send({ type: "delta", text }),
-          onError: (message) => send({ type: "error", error: message }),
-          onDone: () => send({ type: "done" }),
-        },
-      )
-    } catch (error) {
-      if (!abort.signal.aborted) send({ type: "error", error: error instanceof Error ? error.message : String(error) })
-    } finally {
-      res.end()
-    }
-  })
-
-  // Static files in production (publicly accessible so the login page can load)
-  const webDist = path.resolve(__dirname, "../../web/dist")
-  const hasWebDist = fs.existsSync(webDist)
-  if (hasWebDist) {
-    app.use(express.static(webDist))
-  }
-
-  // Protected API routes
-  app.use("/api", authMiddleware)
-  app.use("/api", proxy)
-
-  // SPA catch-all (public)
-  if (hasWebDist) {
-    app.get("*", (_req, res) => {
-      res.sendFile(path.join(webDist, "index.html"))
-    })
-  } else {
-    app.get("/", (_req, res) => {
-      res.send("MiMo Code WebUI server is running. Frontend build not found.")
-    })
-  }
 
   console.log(`[server] starting Express on ${HOST}:${port}`)
   const server = app.listen(port, HOST, () => {

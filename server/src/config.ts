@@ -1,4 +1,5 @@
 import fs from "node:fs"
+import net from "node:net"
 import os from "node:os"
 import path from "node:path"
 
@@ -124,6 +125,46 @@ function validateConfigID(value: string, field: string): string {
   return trimmed
 }
 
+function isPrivateIPv4(hostname: string): boolean {
+  const parts = hostname.split(".").map((part) => Number(part))
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false
+  const [a, b] = parts
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 198 && (b === 18 || b === 19))
+  )
+}
+
+function isPrivateIPv6(hostname: string): boolean {
+  const normalized = hostname.toLowerCase()
+  return normalized === "::1" || normalized.startsWith("fc") || normalized.startsWith("fd") || normalized.startsWith("fe80:")
+}
+
+function validateOpenAIBaseUrl(value: string): string {
+  const trimmed = value.trim()
+  let url: URL
+  try {
+    url = new URL(trimmed)
+  } catch {
+    throw new Error("baseUrl must be a valid URL")
+  }
+  if (url.protocol !== "https:") throw new Error("baseUrl must use https")
+
+  const hostname = url.hostname.toLowerCase()
+  if (hostname === "localhost" || hostname.endsWith(".localhost")) throw new Error("baseUrl host is not allowed")
+  const ipVersion = net.isIP(hostname)
+  if ((ipVersion === 4 && isPrivateIPv4(hostname)) || (ipVersion === 6 && isPrivateIPv6(hostname))) {
+    throw new Error("baseUrl host is not allowed")
+  }
+  return trimmed.replace(/\/+$/, "")
+}
+
 export function listManualModels(): ManualModelSummary[] {
   const config = readMimoConfig()
   return Object.entries(config.provider ?? {}).flatMap(([providerID, provider]) =>
@@ -160,7 +201,7 @@ export function resolveOpenAICompatibleModel(model: string) {
     throw new Error(`OpenAI-compatible stream config not found for ${model}`)
   }
 
-  return { providerID, modelID, baseUrl, apiKey }
+  return { providerID, modelID, baseUrl: validateOpenAIBaseUrl(baseUrl), apiKey }
 }
 
 export function addMimoModelConfig(input: ManualModelInput): ManualModelSummary {
@@ -177,6 +218,7 @@ export function addMimoModelConfig(input: ManualModelInput): ManualModelSummary 
   if (!baseUrl) {
     throw new Error("baseUrl is required for a new provider")
   }
+  const safeBaseUrl = validateOpenAIBaseUrl(baseUrl)
 
   const nextConfig: MimoConfig = {
     ...config,
@@ -186,7 +228,7 @@ export function addMimoModelConfig(input: ManualModelInput): ManualModelSummary 
         ...provider,
         name: provider.name ?? providerID,
         npm: provider.npm ?? "@ai-sdk/openai-compatible",
-        api: baseUrl,
+        api: safeBaseUrl,
         options: apiKey ? { ...(provider.options ?? {}), apiKey } : provider.options,
         models: {
           ...models,
@@ -210,7 +252,7 @@ export function addMimoModelConfig(input: ManualModelInput): ManualModelSummary 
     providerID,
     modelID,
     name,
-    baseUrl,
+    baseUrl: safeBaseUrl,
     tool_call: input.tool_call ?? models[modelID]?.tool_call ?? true,
     attachment: input.attachment ?? models[modelID]?.attachment ?? true,
     reasoning: input.reasoning ?? models[modelID]?.reasoning ?? true,

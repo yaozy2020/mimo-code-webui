@@ -139,12 +139,7 @@ export async function runMimoPrompt(input: { model: string; prompt: string }): P
   if (!mimo) throw new Error("MiMo-Code CLI (mimo) not found")
 
   return new Promise((resolve, reject) => {
-    const quote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`
-    const command = [mimo.command, "run", "--model", input.model, "--format", "json", input.prompt]
-      .map(quote)
-      .join(" ")
-    const proc = nodeSpawn(command, {
-      shell: true,
+    const proc = nodeSpawn(mimo.command, createMimoRunArgs(input), {
       cwd: process.cwd(),
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -194,6 +189,10 @@ export async function runMimoPrompt(input: { model: string; prompt: string }): P
       resolve({ text: textParts.join("\n") || stdout.trim() })
     })
   })
+}
+
+export function createMimoRunArgs(input: { model: string; prompt: string }): string[] {
+  return ["run", "--model", input.model, "--format", "json", input.prompt]
 }
 
 export async function probeNativeModel(input: { baseUrl: string; model: string; prompt?: string }): Promise<{ supported: boolean; text?: string; reason?: string }> {
