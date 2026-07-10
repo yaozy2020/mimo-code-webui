@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url"
 import type { Request } from "express"
 import { createApp } from "./app.js"
 import { assertSafeAuthPolicy } from "./authPolicy.js"
+import { createCliCommandRunner } from "./cliCommands.js"
 import { addMimoModelConfig, getProjectRoot, listManualModels, migrateLegacyMimoConfig, readMimoConfig, resolveOpenAICompatibleModel } from "./config.js"
 import { checkHealth, detectMimo, ensureMimoServerForDirectory, listBuiltinModels, listManagedMimoServers, probeNativeModel, runMimoPrompt, startMimoServer, stopManagedMimoServers, stopMimoServer } from "./mimo.js"
 import { createMimoSupervisor } from "./mimoSupervisor.js"
@@ -133,6 +134,8 @@ async function main() {
     stopManagedServers: stopManagedMimoServers,
     listManagedServers: listManagedMimoServers,
   })
+  const mimo = detectMimo()
+  const cliCommandRunner = mimo ? createCliCommandRunner({ command: mimo.command }) : null
 
   async function restartBaseMimo(delayMs = 3000) {
     if (shuttingDown) return
@@ -181,6 +184,10 @@ async function main() {
       return supervisor.restartBase()
     },
     runMimoPrompt,
+    runReadonlyCliCommand: async (id) => {
+      if (!cliCommandRunner) throw new Error("MiMo-Code CLI (mimo) not found")
+      return cliCommandRunner.runReadonlyCliCommand(id)
+    },
     resolveOpenAICompatibleModel,
     streamOpenAICompatible,
     proxy,

@@ -377,6 +377,25 @@ export async function runLocalPrompt(input: { model: string; prompt: string }): 
   return response.json() as Promise<{ text: string }>
 }
 
+export interface LocalCliCommandResult {
+  command: string
+  args: string[]
+  stdout: string
+  stderr: string
+}
+
+export async function runReadonlyCliCommand(id: string): Promise<LocalCliCommandResult> {
+  const response = await fetch(`/local-cli/commands/${encodeURIComponent(id)}`, {
+    credentials: "same-origin",
+    headers: getAuthHeaders(),
+  })
+  if (!response.ok) {
+    const data = (await response.json().catch(() => ({}))) as { error?: string }
+    throw new Error(data.error || `HTTP ${response.status}`)
+  }
+  return response.json() as Promise<LocalCliCommandResult>
+}
+
 export interface LocalPromptStreamHandlers {
   onStart?: () => void
   onDelta: (text: string) => void

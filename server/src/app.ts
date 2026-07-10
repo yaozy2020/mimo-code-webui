@@ -32,6 +32,7 @@ export interface AppOptions {
   probeNativeModel: (input: { baseUrl: string; model: string }) => HandlerResult<unknown>
   restartMimo: () => Promise<{ ok: boolean; url?: string; error?: string }>
   runMimoPrompt: (input: { model: string; prompt: string }) => HandlerResult<unknown>
+  runReadonlyCliCommand: (id: string) => HandlerResult<unknown>
   resolveOpenAICompatibleModel: (model: string) => OpenAIStreamModel
   streamOpenAICompatible: (input: OpenAIStreamInput, handlers: OpenAIStreamHandlers) => Promise<void>
   proxy?: express.RequestHandler
@@ -199,9 +200,11 @@ export function createApp(options: AppOptions) {
 
   app.use("/local-config", authMiddleware)
   app.use("/local-run", authMiddleware)
+  app.use("/local-cli", authMiddleware)
   app.use("/local-status", rateLimitMiddleware)
   app.use("/local-config", rateLimitMiddleware)
   app.use("/local-run", rateLimitMiddleware)
+  app.use("/local-cli", rateLimitMiddleware)
   app.get("/local-config/models", (_req, res) => {
     res.json({ models: options.listManualModels() })
   })
@@ -301,6 +304,15 @@ export function createApp(options: AppOptions) {
     } finally {
       clearTimeout(timeout)
       res.end()
+    }
+  })
+
+  app.get("/local-cli/commands/:id", async (req, res) => {
+    try {
+      res.json(await options.runReadonlyCliCommand(req.params.id))
+    } catch (error) {
+      logRouteError("local cli command failed", error, req)
+      res.status(400).json(publicError("Unsupported or failed MiMo command"))
     }
   })
 

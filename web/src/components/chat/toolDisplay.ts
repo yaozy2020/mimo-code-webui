@@ -13,3 +13,11 @@ export function toolTaskTitle(part: MessagePart) {
   if (!input || typeof input !== "object") return ""
   return firstString(input as Record<string, unknown>, ["summary", "content", "title", "task", "todo", "description", "prompt"])
 }
+
+export function isToolDone(status: unknown) {
+  return ["completed", "success", "done"].includes(String(status ?? ""))
+}
+
+export function isToolRunning(status: unknown) {
+  return ["pending", "running", "in_progress", "busy"].includes(String(status ?? ""))
+}

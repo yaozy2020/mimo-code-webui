@@ -8,7 +8,7 @@ import type { Message } from "@/types"
 import { codeBlockClassName, codeBlockText, inlineCodeClassName } from "./codeDisplay"
 import { getSafeExternalHref } from "./linkSafety"
 import { attachmentFileClassName, attachmentPreviewClassName, getVisibleAttachments } from "./messageAttachments"
-import { toolTaskTitle } from "./toolDisplay"
+import { isToolDone, isToolRunning, toolTaskTitle } from "./toolDisplay"
 
 interface MessageBubbleProps {
   message: Message
@@ -190,8 +190,8 @@ function CollapsibleTool({ part }: { part: NonNullable<Message["parts"]>[number]
   const prevStatusRef = useRef(status)
 
   useEffect(() => {
-    const wasRunning = ["pending", "running"].includes(prevStatusRef.current)
-    const isNowDone = status === "completed" || status === "success" || status === "done"
+    const wasRunning = isToolRunning(prevStatusRef.current)
+    const isNowDone = isToolDone(status)
     prevStatusRef.current = status
     if (wasRunning && isNowDone) {
       setOpen(false)
@@ -204,7 +204,7 @@ function CollapsibleTool({ part }: { part: NonNullable<Message["parts"]>[number]
   const target = toolTargetPath(part)
   const taskTitle = toolTaskTitle(part)
   const detail = toolDetailSummary(part)
-  const isDone = status === "completed" || status === "success" || status === "done"
+  const isDone = isToolDone(status)
 
   return (
     <div className="min-w-0 text-sm">
@@ -224,7 +224,7 @@ function CollapsibleTool({ part }: { part: NonNullable<Message["parts"]>[number]
         <span className="shrink-0 text-xs">
           {isDone ? (
             <Check className="h-3.5 w-3.5 text-emerald-500" />
-          ) : status === "pending" || status === "running" ? (
+          ) : isToolRunning(status) ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
           ) : null}
         </span>

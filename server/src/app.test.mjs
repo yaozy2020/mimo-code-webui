@@ -32,6 +32,10 @@ const { server, url } = await listen(
     probeNativeModel: async () => ({ supported: true }),
     restartMimo: async () => ({ ok: true, url: "http://127.0.0.1:4096" }),
     runMimoPrompt: async () => ({ text: "ok" }),
+    runReadonlyCliCommand: async (id) => {
+      if (id !== "stats") throw new Error("unsupported")
+      return { command: "mimo", args: [id], stdout: `ran ${id}`, stderr: "" }
+    },
     resolveOpenAICompatibleModel: () => ({ providerID: "safe", modelID: "model", baseUrl: "https://api.example.com/v1" }),
     streamOpenAICompatible: async (_input, handlers) => {
       handlers.onStart?.()
@@ -110,6 +114,16 @@ try {
   })
   assert.equal(oversizedStream.status, 413, "/local-run/stream should reject oversized prompts before opening SSE")
 
+  const unauthenticatedCli = await fetch(`${url}/local-cli/commands/stats`)
+  assert.equal(unauthenticatedCli.status, 401, "/local-cli commands should require auth when authToken is configured")
+
+  const authenticatedCli = await fetch(`${url}/local-cli/commands/stats`, { headers: { Authorization: "Bearer secret-token" } })
+  assert.equal(authenticatedCli.status, 200)
+  assert.deepEqual(await authenticatedCli.json(), { command: "mimo", args: ["stats"], stdout: "ran stats", stderr: "" })
+
+  const invalidCli = await fetch(`${url}/local-cli/commands/upgrade`, { headers: { Authorization: "Bearer secret-token" } })
+  assert.equal(invalidCli.status, 400, "unsupported local CLI commands should be rejected")
+
   const unsafeModel = await fetch(`${url}/local-config/models`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: "Bearer secret-token" },
@@ -140,6 +154,7 @@ try {
         throw new Error("spawn failed at /usr/local/bin/mimo")
       },
       runMimoPrompt: async () => ({ text: "ok" }),
+      runReadonlyCliCommand: async () => ({ command: "mimo", args: [], stdout: "", stderr: "" }),
       resolveOpenAICompatibleModel: () => ({ providerID: "safe", modelID: "model", baseUrl: "https://api.example.com/v1" }),
       streamOpenAICompatible: async (_input, handlers) => handlers.onDone?.(),
       rateLimit: { windowMs: 60_000, max: 100 },
@@ -176,6 +191,7 @@ try {
       probeNativeModel: async () => ({ supported: true }),
       restartMimo: async () => ({ ok: true }),
       runMimoPrompt: async () => ({ text: "ok" }),
+      runReadonlyCliCommand: async () => ({ command: "mimo", args: [], stdout: "", stderr: "" }),
       resolveOpenAICompatibleModel: () => ({ providerID: "safe", modelID: "model", baseUrl: "https://api.example.com/v1" }),
       streamOpenAICompatible: async (_input, handlers) => handlers.onDone?.(),
       rateLimit: { windowMs: 60_000, max: 2 },

@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge"
 import { useAppState } from "@/stores/appStore"
 import { promptToolbarDiffRowClassName, promptToolbarRowClassName } from "./promptToolbarDisplay"
 import { getSessionSource } from "./sessionSource"
-import { todoDisplayText } from "./todoDisplay"
+import { isTodoDone, isTodoRunning, todoDisplayText } from "./todoDisplay"
 
 const statusLabels = {
   idle: "空闲",
@@ -31,7 +31,7 @@ export function PromptToolbar({ sessionID, onOpenFileChanges }: PromptToolbarPro
   const usage = contextUsage[sessionID]
   const todoList = todos[sessionID] || []
   const diffList = sessionDiffs[sessionID] || []
-  const completedTodos = todoList.filter((todo) => todo.completed || todo.status === "completed").length
+  const completedTodos = todoList.filter(isTodoDone).length
   const additions = diffList.reduce((sum, diff) => sum + diff.additions, 0)
   const deletions = diffList.reduce((sum, diff) => sum + diff.deletions, 0)
   const contextLabel = usage?.usedTokens !== undefined ? `上下文 ${formatTokenCount(usage.usedTokens)}` : undefined
@@ -89,9 +89,9 @@ export function PromptToolbar({ sessionID, onOpenFileChanges }: PromptToolbarPro
               key={todo.id ?? `${todo.content}-${index}`}
               className="flex items-start gap-2 rounded-md border border-border/60 bg-muted/30 px-2.5 py-1.5"
             >
-              {todo.completed || todo.status === "completed" ? (
+              {isTodoDone(todo) ? (
                 <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-green-600" />
-              ) : todo.status === "in_progress" ? (
+              ) : isTodoRunning(todo) ? (
                 <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
               ) : (
                 <Circle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
