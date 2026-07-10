@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { nextStreamingDisplay } from "@/lib/streamingDisplay"
 import { formatMessageTime } from "@/lib/time"
 import type { Message } from "@/types"
-import { inlineCodeClassName } from "./codeDisplay"
+import { codeBlockClassName, codeBlockText, inlineCodeClassName } from "./codeDisplay"
 import { getSafeExternalHref } from "./linkSafety"
 import { getVisibleAttachments } from "./messageAttachments"
 import { toolTaskTitle } from "./toolDisplay"
@@ -117,6 +117,14 @@ function AttachmentPreview({ part }: { part: NonNullable<Message["parts"]>[numbe
 }
 
 function AssistantMarkdown({ content }: { content: string }) {
+  const [copiedCode, setCopiedCode] = useState<string | null>(null)
+
+  function copyCodeBlock(text: string) {
+    void navigator.clipboard.writeText(text)
+    setCopiedCode(text)
+    window.setTimeout(() => setCopiedCode((current) => (current === text ? null : current)), 1200)
+  }
+
   return (
     <div className="assistant-markdown min-w-0 text-[15px] leading-8 text-foreground/90 [overflow-wrap:anywhere]">
       <ReactMarkdown
@@ -140,14 +148,30 @@ function AssistantMarkdown({ content }: { content: string }) {
           blockquote: ({ children }) => (
             <blockquote className="my-4 border-l-2 border-border pl-4 text-muted-foreground">{children}</blockquote>
           ),
-          pre: ({ children }) => <pre className="my-4 overflow-x-auto rounded-lg border border-border/70 bg-slate-950/95 p-4 text-[13px] leading-6 text-slate-100 shadow-sm dark:bg-slate-950">{children}</pre>,
+          pre: ({ children }) => {
+            const text = codeBlockText(children)
+            return (
+              <div className="group relative my-4 min-w-0 rounded-lg border border-border/70 bg-slate-950/95 text-[13px] leading-6 text-slate-100 shadow-sm dark:bg-slate-950">
+                <button
+                  type="button"
+                  className="absolute right-2 top-2 z-10 flex h-9 min-w-9 items-center justify-center rounded-md border border-white/10 bg-slate-900/90 px-2 text-xs font-medium text-slate-100 shadow-sm backdrop-blur transition-colors hover:bg-slate-800 active:bg-slate-700"
+                  aria-label="复制代码块"
+                  title="复制代码块"
+                  onClick={() => copyCodeBlock(text)}
+                >
+                  {copiedCode === text ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                </button>
+                <pre className="overflow-x-auto overscroll-x-contain p-4 pr-14 [-webkit-overflow-scrolling:touch]">{children}</pre>
+              </div>
+            )
+          },
           code: ({ className, children, ...props }) => {
             const language = languageFromClassName(className)
             if (!className) {
               return <code className={inlineCodeClassName(children)} {...props}>{children}</code>
             }
             return (
-              <code className="block min-w-0 whitespace-pre font-mono" data-language={language} {...props}>
+              <code className={codeBlockClassName()} data-language={language} {...props}>
                 {children}
               </code>
             )
