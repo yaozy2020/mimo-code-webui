@@ -21,4 +21,14 @@ assert.deepEqual(
   "existing local visibility choices should be preserved",
 )
 
+assert.deepEqual(
+  [...visibleSessionIDsAfterLoad({
+    sessions: [{ id: "s1" }, { id: "s2" }],
+    ownedSessionIDs: ["missing"],
+    attachedSessionIDs: [],
+  })],
+  ["s1", "s2"],
+  "stale local visibility ids should recover from server sessions when none still exist",
+)
+
 console.log("session visibility tests passed")

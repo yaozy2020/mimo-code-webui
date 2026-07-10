@@ -6,6 +6,9 @@ export function visibleSessionIDsAfterLoad(input: {
   attachedSessionIDs: string[]
 }) {
   const visible = new Set([...input.ownedSessionIDs, ...input.attachedSessionIDs])
-  if (visible.size > 0 || input.sessions.length === 0) return visible
-  return new Set(input.sessions.map((session) => session.id))
+  if (input.sessions.length === 0) return visible
+  const serverIDs = new Set(input.sessions.map((session) => session.id))
+  const hasVisibleServerSession = [...visible].some((id) => serverIDs.has(id))
+  if (visible.size > 0 && hasVisibleServerSession) return visible
+  return serverIDs
 }

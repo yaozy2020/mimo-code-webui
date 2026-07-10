@@ -323,7 +323,9 @@ function appReducer(state: AppState, action: AppAction): AppState {
         ownedSessionIDs: state.ownedSessionIDs,
         attachedSessionIDs: state.attachedSessionIDs,
       })
-      if (state.ownedSessionIDs.length === 0 && state.attachedSessionIDs.length === 0 && restoredVisibleIDs.size > 0) {
+      const currentVisibleIDs = new Set([...state.ownedSessionIDs, ...state.attachedSessionIDs])
+      const hasCurrentVisibleSession = action.sessions.some((session) => currentVisibleIDs.has(session.id))
+      if (!hasCurrentVisibleSession && restoredVisibleIDs.size > 0) {
         setAttachedSessionIDs(restoredVisibleIDs)
       }
       const mergedSessions = [
