@@ -158,7 +158,13 @@ export async function collectMessagePages(input: {
   let before: string | undefined
 
   while (allMessages.length < input.maxMessages) {
-    const page = await input.loadPage(before)
+    let page: Message[]
+    try {
+      page = await input.loadPage(before)
+    } catch (error) {
+      if (allMessages.length > 0) break
+      throw error
+    }
     const newMessages = page.filter((message) => !seen.has(message.id))
     for (const message of newMessages) seen.add(message.id)
     allMessages.push(...newMessages)

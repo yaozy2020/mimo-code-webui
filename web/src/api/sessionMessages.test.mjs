@@ -36,4 +36,22 @@ assert.deepEqual(
   "older pages should be merged before recent messages by creation time",
 )
 
+const partialMessages = await collectMessagePages({
+  pageSize: 2,
+  maxMessages: 10,
+  loadPage: async (before) => {
+    if (before) throw new Error('HTTP 400: {"error":[{"message":"Invalid cursor"}]}')
+    return [
+      { id: "recent-1", sessionID: "s", role: "assistant", content: "recent one", time: { created: 3 } },
+      { id: "recent-2", sessionID: "s", role: "user", content: "recent two", time: { created: 4 } },
+    ]
+  },
+})
+
+assert.deepEqual(
+  partialMessages.map((message) => message.id),
+  ["recent-1", "recent-2"],
+  "invalid older-page cursors should keep the messages already loaded",
+)
+
 console.log("session message pagination tests passed")
