@@ -7,7 +7,7 @@ import { formatMessageTime } from "@/lib/time"
 import type { Message } from "@/types"
 import { codeBlockClassName, codeBlockText, inlineCodeClassName } from "./codeDisplay"
 import { getSafeExternalHref } from "./linkSafety"
-import { getVisibleAttachments } from "./messageAttachments"
+import { attachmentFileClassName, attachmentPreviewClassName, getVisibleAttachments } from "./messageAttachments"
 import { toolTaskTitle } from "./toolDisplay"
 
 interface MessageBubbleProps {
@@ -96,20 +96,20 @@ function partSource(part: NonNullable<Message["parts"]>[number]) {
   return part.url || part.content || part.text || ""
 }
 
-function AttachmentPreview({ part }: { part: NonNullable<Message["parts"]>[number] }) {
+function AttachmentPreview({ part, role }: { part: NonNullable<Message["parts"]>[number], role: Message["role"] }) {
   const source = partSource(part)
   const name = part.filename || part.mime || "附件"
 
   if (isImagePart(part) && source) {
     return (
-      <div className="block overflow-hidden rounded-xl border border-primary/15 bg-primary/5">
+      <div className={attachmentPreviewClassName(role)}>
         <img src={source} alt={name} className="max-h-64 max-w-full object-contain" />
       </div>
     )
   }
 
   return (
-    <div className="flex max-w-full items-center gap-2 rounded-xl border border-primary/15 bg-primary/5 px-3 py-2 text-xs text-foreground">
+    <div className={attachmentFileClassName(role)}>
       {isImagePart(part) ? <ImageIcon className="h-3.5 w-3.5 shrink-0" /> : <FileText className="h-3.5 w-3.5 shrink-0" />}
       <span className="min-w-0 truncate">{name}</span>
     </div>
@@ -305,7 +305,7 @@ export function MessageBubble({ message, onCopy }: MessageBubbleProps) {
             <div className="flex flex-col items-end gap-2">
               {attachmentParts.length > 0 && (
                 <div className="flex max-w-full flex-col items-end gap-2">
-                  {attachmentParts.map((part) => <AttachmentPreview key={part.id} part={part} />)}
+                  {attachmentParts.map((part) => <AttachmentPreview key={part.id} part={part} role={message.role} />)}
                 </div>
               )}
               {(renderedContent || attachmentParts.length === 0) && (
@@ -355,6 +355,11 @@ export function MessageBubble({ message, onCopy }: MessageBubbleProps) {
       {toolParts.map((part) => (
         <CollapsibleTool key={part.id} part={part} />
       ))}
+      {attachmentParts.length > 0 && (
+        <div className="flex max-w-full flex-col items-start gap-2">
+          {attachmentParts.map((part) => <AttachmentPreview key={part.id} part={part} role={message.role} />)}
+        </div>
+      )}
       {renderedContent && (
         <div className="relative min-w-0">
           <AssistantMarkdown content={renderedContent} />

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { getVisibleAttachments } from "./messageAttachments.ts"
+import { attachmentPreviewClassName, getVisibleAttachments } from "./messageAttachments.ts"
 
 const imagePart = {
   id: "p1",
@@ -10,5 +10,11 @@ const imagePart = {
 }
 
 assert.deepEqual(getVisibleAttachments({ id: "m1", sessionID: "s1", role: "user", parts: [imagePart] }), [imagePart])
+
+assert.match(attachmentPreviewClassName("user"), /border-primary/)
+assert.match(attachmentPreviewClassName("user"), /bg-primary/)
+assert.match(attachmentPreviewClassName("assistant"), /border-border/)
+assert.match(attachmentPreviewClassName("assistant"), /bg-muted/)
+assert.doesNotMatch(attachmentPreviewClassName("assistant"), /border-primary/)
 
 console.log("message attachment tests passed")

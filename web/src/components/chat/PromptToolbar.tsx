@@ -2,6 +2,7 @@ import { useState } from "react"
 import { CheckCircle2, Circle, ChevronDown, ChevronRight, GitBranch, Loader2, ScrollText, Shield } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { useAppState } from "@/stores/appStore"
+import { promptToolbarDiffRowClassName, promptToolbarRowClassName } from "./promptToolbarDisplay"
 import { getSessionSource } from "./sessionSource"
 import { todoDisplayText } from "./todoDisplay"
 
@@ -39,7 +40,7 @@ export function PromptToolbar({ sessionID, onOpenFileChanges }: PromptToolbarPro
 
   return (
     <div className="border-b border-border/60 bg-background/85 px-2 py-1.5 backdrop-blur sm:px-4">
-      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0">
+      <div className={promptToolbarRowClassName}>
         <Badge variant={statusState === "busy" ? "default" : "secondary"} className="shrink-0 gap-1 capitalize text-[10px]">
             {statusState === "busy" && <Loader2 className="h-3 w-3 animate-spin" />}
             {(statusState === "waiting_for_permission" || statusState === "waiting_for_question") && (
@@ -101,7 +102,7 @@ export function PromptToolbar({ sessionID, onOpenFileChanges }: PromptToolbarPro
         </div>
       )}
       {diffList.length > 0 && (
-        <div className="mt-2 flex gap-2 overflow-x-auto pb-1 text-xs text-muted-foreground">
+        <div className={promptToolbarDiffRowClassName}>
           {diffList.slice(0, 5).map((diff) => (
             <button
               key={diff.file}
