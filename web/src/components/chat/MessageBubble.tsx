@@ -151,17 +151,20 @@ function AssistantMarkdown({ content }: { content: string }) {
           pre: ({ children }) => {
             const text = codeBlockText(children)
             return (
-              <div className="group relative my-4 min-w-0 rounded-lg border border-border/70 bg-slate-950/95 text-[13px] leading-6 text-slate-100 shadow-sm dark:bg-slate-950">
-                <button
-                  type="button"
-                  className="absolute right-2 top-2 z-10 flex h-9 min-w-9 items-center justify-center rounded-md border border-white/10 bg-slate-900/90 px-2 text-xs font-medium text-slate-100 shadow-sm backdrop-blur transition-colors hover:bg-slate-800 active:bg-slate-700"
-                  aria-label="复制代码块"
-                  title="复制代码块"
-                  onClick={() => copyCodeBlock(text)}
-                >
-                  {copiedCode === text ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                </button>
-                <pre className="overflow-x-auto overscroll-x-contain p-4 pr-14 [-webkit-overflow-scrolling:touch]">{children}</pre>
+              <div className="my-4 min-w-0 overflow-hidden rounded-lg border border-border/70 bg-slate-950/95 text-[13px] leading-6 text-slate-100 shadow-sm dark:bg-slate-950">
+                <div className="flex items-center justify-end border-b border-white/10 bg-slate-900/95 px-2 py-1.5">
+                  <button
+                    type="button"
+                    className="inline-flex h-8 items-center gap-1.5 rounded-md border border-white/10 bg-slate-800 px-2.5 text-xs font-medium text-slate-100 shadow-sm transition-colors hover:bg-slate-700 active:bg-slate-600"
+                    aria-label="复制代码块"
+                    title="复制代码块"
+                    onClick={() => copyCodeBlock(text)}
+                  >
+                    {copiedCode === text ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                    <span>{copiedCode === text ? "已复制" : "复制"}</span>
+                  </button>
+                </div>
+                <pre className="overflow-x-auto overscroll-x-contain p-4 [-webkit-overflow-scrolling:touch]">{children}</pre>
               </div>
             )
           },

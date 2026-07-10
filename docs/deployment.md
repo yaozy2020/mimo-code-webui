@@ -142,20 +142,26 @@ HOST=0.0.0.0 PORT=8080 AUTH_TOKEN=replace-with-a-long-random-token ./scripts/sta
 
 Open `http://<server-ip>:8080` from another device. Do not expose direct LAN mode without `AUTH_TOKEN` except for temporary trusted testing.
 
-## Source Checkout On NAS Or Local Servers
+## Source Checkout On Local Servers
 
 For a source checkout, prefer the diagnostic wrapper instead of hand-written
 `kill` and `npm start` commands:
 
 ```bash
-cd /vol2/1000/下载/mimo/mimo-code-webui
-AUTH_TOKEN=replace-with-a-long-random-token ./scripts/run-source.sh --restart
+cd /path/to/mimo-code-webui
+AUTH_TOKEN=replace-with-a-long-random-token ./scripts/run-source.sh --restart --daemon
 ```
 
 The wrapper keeps the two directory concepts separate:
 
-- `MIMO_WORKSPACE_ROOT` controls which workspace directories WebUI accepts. The source wrapper defaults it to `/` so sessions can be created outside the WebUI repository.
-- `MIMO_SERVE_CWD` controls where the base `mimo serve` process is launched. The source wrapper defaults it to the parent of the WebUI repository, such as `/vol2/1000/下载`, because `mimo serve` may reject `/` as a project directory even when WebUI is allowed to browse broad workspace roots.
+- `MIMO_WORKSPACE_ROOT` controls which workspace directories WebUI accepts. The source wrapper defaults it to the parent of the WebUI repository.
+- `MIMO_SERVE_CWD` controls where the base `mimo serve` process is launched. The source wrapper defaults it to the parent of the WebUI repository. Override it when MiMo-Code should serve a broader workspace root.
+
+For direct LAN access without a reverse proxy, opt in explicitly:
+
+```bash
+HOST=0.0.0.0 PORT=8090 AUTH_TOKEN=replace-with-a-long-random-token ./scripts/run-source.sh --restart --daemon
+```
 
 If old MiMo config files shadow the intended `~/.config/mimocode/mimocode.jsonc`, clean only the known generated/legacy files before startup:
 
@@ -165,6 +171,16 @@ AUTH_TOKEN=replace-with-a-long-random-token ./scripts/run-source.sh --restart --
 
 The wrapper removes `~/.mimo/mimo.config.json` and `~/.config/mimocode/config.json` only when `--clean-poisoned-config` is passed. It leaves `~/.config/mimocode/mimocode.jsonc` untouched.
 When `MIMO_CONFIG_PATH` is not already set and `~/.config/mimocode/mimocode.jsonc` exists, the wrapper points WebUI and `mimo serve` at that file so `scripts/start.sh` does not recreate `config.json` as the default config source.
+
+Use `--recover` only for explicit local break/fix recovery. It combines `--restart`, `--clean-poisoned-config`, `--clean-db-locks`, and `--daemon`, then returns after `/status` is healthy. WebUI logs are written to `/tmp/mimo-webui.log`.
+
+If your host needs a wider workspace root, set it explicitly instead of relying on broad defaults:
+
+```bash
+MIMO_WORKSPACE_ROOT=/srv MIMO_SERVE_CWD=/srv/workspaces AUTH_TOKEN=replace-with-a-long-random-token ./scripts/run-source.sh --restart --daemon
+```
+
+Avoid using `MIMO_WORKSPACE_ROOT=/` unless the machine is trusted and you intentionally want WebUI sessions to browse the whole filesystem.
 
 Keep one deployment user for the checkout, build output, `node_modules`, and runtime process. A typical failure mode is building as one user and starting as another, which can make models disappear or leave sessions blank because the runtime cannot read config, build output, or workspace directories.
 
