@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { LogOut, Trash2 } from "lucide-react"
-import { fetchAvailableModels, fetchRuntimeModels, restartMimoServer, saveManualModel, type RuntimeModel } from "@/api/client"
+import { fetchAvailableModels, fetchRuntimeModels, logout, restartMimoServer, saveManualModel, type RuntimeModel } from "@/api/client"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
@@ -20,6 +20,13 @@ const PRESET_BASE_URLS = [
   "https://token-plan-sgp.xiaomimimo.com/anthropic",
   "https://api.xiaomimimo.com/v1",
 ]
+
+function toggleRowClassName(checked: boolean) {
+  return [
+    "flex items-center justify-between rounded-md border px-3 py-2 text-sm transition-colors",
+    checked ? "border-primary/40 bg-primary/10 text-foreground" : "border-transparent bg-muted/40 text-muted-foreground",
+  ].join(" ")
+}
 
 export function SettingsPanel({ onClose }: SettingsPanelProps) {
   const dispatch = useAppDispatch()
@@ -96,9 +103,11 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
     window.location.reload()
   }
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await logout().catch(() => undefined)
     dispatch({ type: "UPDATE_SETTINGS", settings: { authToken: "" } })
     onClose()
+    window.location.reload()
   }
 
   return (
@@ -142,10 +151,6 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
               <Input id="api-key" type="password" value={settings.apiKey} onChange={(e) => dispatch({ type: "UPDATE_SETTINGS", settings: { apiKey: e.target.value } })} placeholder="sk-..." />
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="auth-token">WebUI 认证令牌</Label>
-              <Input id="auth-token" type="password" value={settings.authToken} onChange={(e) => dispatch({ type: "UPDATE_SETTINGS", settings: { authToken: e.target.value } })} placeholder="服务端要求的 Bearer token（可选）..." />
-            </div>
           </div>
           <div className="mt-3 space-y-1 text-xs text-muted-foreground">
             <p>{runtimeModels.length > 0 ? "模型列表来自 MiMo TUI 内置模板，另合并当前运行配置和手动新增项。" : modelsError ? `无法读取 TUI 模型模板，使用兜底列表：${modelsError}` : "正在读取 MiMo TUI 模型模板..."}</p>
@@ -169,22 +174,22 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
             <Input type="password" value={manualModel.apiKey} onChange={(e) => setManualModel({ ...manualModel, apiKey: e.target.value })} placeholder="API Key（写入后端配置时可选）" className="md:col-span-2" />
           </div>
           <div className="mt-3 grid gap-2 md:grid-cols-3">
-            <label className="flex items-center justify-between rounded-md bg-muted/40 px-3 py-2 text-sm">
+            <label className={toggleRowClassName(manualModel.tool_call)}>
               <span>工具/工作区</span>
               <Switch checked={manualModel.tool_call} onChange={(e) => setManualModel({ ...manualModel, tool_call: e.target.checked })} />
             </label>
-            <label className="flex items-center justify-between rounded-md bg-muted/40 px-3 py-2 text-sm">
+            <label className={toggleRowClassName(manualModel.attachment)}>
               <span>附件</span>
               <Switch checked={manualModel.attachment} onChange={(e) => setManualModel({ ...manualModel, attachment: e.target.checked })} />
             </label>
-            <label className="flex items-center justify-between rounded-md bg-muted/40 px-3 py-2 text-sm">
+            <label className={toggleRowClassName(manualModel.reasoning)}>
               <span>多步推理</span>
               <Switch checked={manualModel.reasoning} onChange={(e) => setManualModel({ ...manualModel, reasoning: e.target.checked })} />
             </label>
           </div>
           <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <label className="flex items-center justify-between gap-3 text-sm sm:justify-start">
-              <span>同时写入后端 MiMo 配置</span>
+              <span className={manualModel.writeBackend ? "font-medium text-foreground" : "text-muted-foreground"}>同时写入后端 MiMo 配置</span>
               <Switch checked={manualModel.writeBackend} onChange={(e) => setManualModel({ ...manualModel, writeBackend: e.target.checked })} />
             </label>
             <Button size="sm" onClick={saveManual} disabled={!manualModel.providerID.trim() || !manualModel.modelID.trim()}>添加并选中</Button>
@@ -194,7 +199,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
 
         <section className="rounded-lg border border-border/70 p-3 sm:p-4">
           <h3 className="text-sm font-semibold">界面与安全</h3>
-          <div className="mt-3 flex items-center justify-between rounded-md bg-muted/40 px-3 py-2">
+          <div className={toggleRowClassName(settings.theme === "dark") + " mt-3"}>
             <div>
               <Label htmlFor="theme">深色模式</Label>
               <p className="text-xs text-muted-foreground">切换当前浏览器的显示主题。</p>
@@ -207,7 +212,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
           <h3 className="text-sm font-semibold text-destructive">危险操作</h3>
           <p className="mt-1 text-xs text-muted-foreground">退出登录将清除认证令牌；清除本地数据将删除所有会话记录和设置，且不可恢复。</p>
           <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-            {settings.authToken && <Button size="sm" variant="outline" onClick={handleLogout} className="gap-1"><LogOut className="h-3.5 w-3.5" />退出登录</Button>}
+            <Button size="sm" variant="outline" onClick={handleLogout} className="gap-1"><LogOut className="h-3.5 w-3.5" />退出登录</Button>
             <Button size="sm" variant="outline" onClick={handleClearAll} className="gap-1 text-destructive"><Trash2 className="h-3.5 w-3.5" />清除本地数据</Button>
           </div>
         </section>

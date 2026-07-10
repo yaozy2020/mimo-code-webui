@@ -1,5 +1,5 @@
 import { useEffect } from "react"
-import { getMessages, getSessionDiff, getTodos } from "@/api/session"
+import { getMessages, getRecentMessages, getSessionDiff, getTodos } from "@/api/session"
 import { useAppDispatch } from "@/stores/appStore"
 import type { Message } from "@/types"
 
@@ -19,7 +19,7 @@ export function useActiveSessionData(input: { activeSessionID: string | null; ac
 
     const load = async () => {
       try {
-        const msgs = await getMessages(activeSessionID, 50, undefined, activeDirectory)
+        const msgs = await getRecentMessages(activeSessionID, activeDirectory)
         if (cancelled) return
         dispatch({ type: "SET_MESSAGES", sessionID: activeSessionID, messages: msgs })
         const messageID = latestUserMessageID(msgs)

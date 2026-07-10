@@ -58,6 +58,7 @@ MIMO_PORT=4096
 AUTH_TOKEN=replace-with-a-long-random-token
 MIMO_CONFIG_PATH=/home/mimo-webui/.config/mimocode/config.json
 MIMO_WORKSPACE_ROOT=/srv/workspaces
+MIMO_WEBUI_STRICT_RELEASE=true
 EOF
 sudo chmod 640 /etc/mimo-code-webui/webui.env
 ```
@@ -71,6 +72,7 @@ Notes:
 - Set `MIMO_HOME=/path/to/home` only when the service must use a different home directory for MiMo config and state.
 - Set `MIMO_DATA_HOME` and `MIMO_STATE_HOME` only when the service account cannot write to its default XDG data/state paths.
 - Set `MIMO_WORKSPACE_ROOT` to the parent directory that WebUI sessions are allowed to use.
+- Keep `MIMO_WEBUI_STRICT_RELEASE=true` for production releases so startup fails fast if dependencies or build output are missing.
 
 Make sure the service user can read the MiMo config and workspace root:
 
@@ -96,7 +98,7 @@ sudo systemctl status mimo-code-webui
 sudo journalctl -u mimo-code-webui -f
 ```
 
-The service runs `scripts/start.sh`, which checks Node/npm, installs missing workspace dependencies, builds missing assets, and starts `server/dist/index.js`.
+The service runs `scripts/start.sh`, which checks Node/npm and starts `server/dist/index.js`. In strict release mode, missing dependencies or build output cause startup to fail instead of running install/build on the server.
 
 ## Reverse Proxy
 
@@ -174,7 +176,7 @@ curl -fsS -H "Authorization: Bearer $AUTH_TOKEN" http://127.0.0.1:8080/api/confi
 For source checkouts before packaging, run:
 
 ```bash
-npm run verify
+./scripts/verify-release.sh
 npm run package:release
 ```
 

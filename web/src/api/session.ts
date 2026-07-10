@@ -1,4 +1,5 @@
 import { fetchJson } from "./client"
+import { orderMessages } from "../lib/messageOrder"
 import type { Message, MessagePart, Session, SnapshotFileDiff, TodoItem } from "@/types"
 
 export interface SessionListResponse {
@@ -145,6 +146,38 @@ export async function getMessages(sessionID: string, limit = 50, before?: string
   if (Array.isArray(result)) return result.map(rawToMessage)
   const rawMessages = result.messages ?? result.data ?? []
   return rawMessages.map(rawToMessage)
+}
+
+export async function collectMessagePages(input: {
+  pageSize: number
+  maxMessages: number
+  loadPage: (before?: string) => Promise<Message[]>
+}): Promise<Message[]> {
+  const allMessages: Message[] = []
+  const seen = new Set<string>()
+  let before: string | undefined
+
+  while (allMessages.length < input.maxMessages) {
+    const page = await input.loadPage(before)
+    const newMessages = page.filter((message) => !seen.has(message.id))
+    for (const message of newMessages) seen.add(message.id)
+    allMessages.push(...newMessages)
+
+    if (page.length < input.pageSize || newMessages.length === 0) break
+    before = orderMessages(page)[0]?.id
+    if (!before) break
+  }
+
+  return orderMessages(allMessages).slice(-input.maxMessages)
+}
+
+export async function getRecentMessages(sessionID: string, directory?: string, maxMessages = 500): Promise<Message[]> {
+  const pageSize = 100
+  return collectMessagePages({
+    pageSize,
+    maxMessages,
+    loadPage: (before) => getMessages(sessionID, pageSize, before, directory),
+  })
 }
 
 export async function getTodos(sessionID: string, directory?: string): Promise<TodoItem[]> {

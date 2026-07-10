@@ -77,6 +77,19 @@ fi
 
 echo "[start] using npm: $(command -v npm)"
 
+if [ "${MIMO_WEBUI_STRICT_RELEASE:-false}" = "true" ]; then
+  missing=0
+  for required_path in "node_modules" "web/node_modules" "server/node_modules" "web/dist" "server/dist"; do
+    if [ ! -d "$required_path" ]; then
+      echo "Error: strict release mode requires $required_path to exist. Build and package the release before starting."
+      missing=1
+    fi
+  done
+  if [ "$missing" -ne 0 ]; then
+    exit 1
+  fi
+fi
+
 if [ ! -d "node_modules" ] || [ ! -d "web/node_modules" ] || [ ! -d "server/node_modules" ]; then
   echo "Installing dependencies..."
   npm install

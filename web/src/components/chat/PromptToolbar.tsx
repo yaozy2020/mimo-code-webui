@@ -3,6 +3,7 @@ import { CheckCircle2, Circle, ChevronDown, ChevronRight, GitBranch, Loader2, Sc
 import { Badge } from "@/components/ui/badge"
 import { useAppState } from "@/stores/appStore"
 import { getSessionSource } from "./sessionSource"
+import { todoDisplayText } from "./todoDisplay"
 
 const statusLabels = {
   idle: "空闲",
@@ -94,7 +95,7 @@ export function PromptToolbar({ sessionID, onOpenFileChanges }: PromptToolbarPro
               ) : (
                 <Circle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
               )}
-              <span className="min-w-0 flex-1 break-words leading-relaxed text-foreground/80">{todo.content}</span>
+              <span className="min-w-0 flex-1 break-words leading-relaxed text-foreground/90">{todoDisplayText(todo)}</span>
             </div>
           ))}
         </div>

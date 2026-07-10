@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useReducer } from "react"
 import { orderMessages } from "@/lib/messageOrder"
 import { appendMessageContent, mergeMessagePartsWithVisibleAttachments, setMessageContent } from "./appReducers"
+import { visibleSessionIDsAfterLoad } from "./sessionVisibility"
 import type {
   AgentStatus,
   ContextUsage,
@@ -317,14 +318,26 @@ function messagesEqual(a: Message[], b: Message[]) {
 function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case "SET_SESSIONS": {
+      const restoredVisibleIDs = visibleSessionIDsAfterLoad({
+        sessions: action.sessions,
+        ownedSessionIDs: state.ownedSessionIDs,
+        attachedSessionIDs: state.attachedSessionIDs,
+      })
+      if (state.ownedSessionIDs.length === 0 && state.attachedSessionIDs.length === 0 && restoredVisibleIDs.size > 0) {
+        setAttachedSessionIDs(restoredVisibleIDs)
+      }
       const mergedSessions = [
         ...action.sessions.map((session) => mergeSessionWithExisting(session, state.sessions.find((item) => item.id === session.id))),
         ...state.sessions.filter((session) => !action.sessions.some((item) => item.id === session.id)),
       ]
+      const activeSessionID = state.activeSessionID ?? mergedSessions.find((session) => restoredVisibleIDs.has(session.id))?.id ?? null
+      if (!state.activeSessionID && activeSessionID) localStorage.setItem(ACTIVE_SESSION_KEY, activeSessionID)
       setCachedSessions(mergedSessions)
       return {
         ...state,
         sessions: mergedSessions,
+        attachedSessionIDs: [...getAttachedSessionIDs()],
+        activeSessionID,
       }
     }
     case "ADD_SESSION": {
@@ -582,7 +595,7 @@ function appReducer(state: AppState, action: AppAction): AppState {
         localStorage.setItem("mimo-webui-theme", next.theme)
         document.documentElement.classList.toggle("dark", next.theme === "dark")
       }
-      if (action.settings.authToken !== undefined) localStorage.setItem("mimo-webui-auth-token", next.authToken)
+      if (action.settings.authToken !== undefined) localStorage.removeItem("mimo-webui-auth-token")
       return { ...state, settings: next }
     }
     default:

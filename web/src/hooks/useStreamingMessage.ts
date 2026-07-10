@@ -1,5 +1,5 @@
 import { AuthRequiredError, createEventStream } from "@/api/client"
-import { getMessages, getTodos } from "@/api/session"
+import { getRecentMessages, getTodos } from "@/api/session"
 import type { Message, PermissionRequest, QuestionRequest, SnapshotFileDiff, StreamEvent } from "@/types"
 import { useAppDispatch, useAppState } from "@/stores/appStore"
 import { useEffect, useRef } from "react"
@@ -73,7 +73,7 @@ function syncSessionSnapshot(
         return
       }
       try {
-        const [messages, todos] = await Promise.all([getMessages(sessionID, 50, undefined, directory), getTodos(sessionID, directory)])
+        const [messages, todos] = await Promise.all([getRecentMessages(sessionID, directory), getTodos(sessionID, directory)])
         if (context.signal.aborted) return
         dispatch({ type: "SET_MESSAGES", sessionID, messages })
         dispatch({ type: "SET_TODOS", sessionID, todos })

@@ -10,6 +10,7 @@ function getAuthHeaders(): Record<string, string> {
 export async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     ...options,
+    credentials: "same-origin",
     headers: {
       "Content-Type": "application/json",
       ...getAuthHeaders(),
@@ -70,6 +71,7 @@ export function createEventStream(
       const eventPath = directory ? `/global/event?directory=${encodeURIComponent(directory)}` : "/global/event"
       const response = await fetch(`${API_BASE}${eventPath}`, {
         signal,
+        credentials: "same-origin",
         headers: getAuthHeaders(),
       })
 
@@ -153,7 +155,7 @@ export async function fetchStatus(): Promise<Record<string, unknown>> {
 }
 
 export async function fetchLocalStatus(): Promise<Record<string, unknown>> {
-  const response = await fetch("/local-status", { headers: getAuthHeaders() })
+  const response = await fetch("/local-status", { credentials: "same-origin", headers: getAuthHeaders() })
   if (response.status === 401) {
     throw new AuthRequiredError("Authentication required")
   }
@@ -258,7 +260,7 @@ function writeBrowserModel(input: ManualModelInput): RuntimeModel {
 }
 
 export async function fetchBackendModels(): Promise<RuntimeModel[]> {
-  const response = await fetch("/local-config/models", { headers: getAuthHeaders() })
+  const response = await fetch("/local-config/models", { credentials: "same-origin", headers: getAuthHeaders() })
   if (!response.ok) return []
   const data = (await response.json()) as LocalConfigModelsResponse
   return (data.models ?? []).map((model) => ({
@@ -274,7 +276,7 @@ export async function fetchBackendModels(): Promise<RuntimeModel[]> {
 }
 
 export async function fetchBuiltinModelTemplates(): Promise<RuntimeModel[]> {
-  const response = await fetch("/local-config/model-templates", { headers: getAuthHeaders() })
+  const response = await fetch("/local-config/model-templates", { credentials: "same-origin", headers: getAuthHeaders() })
   if (!response.ok) return []
   const data = (await response.json()) as LocalConfigModelsResponse
   return (data.models ?? []).map((model) => ({
@@ -318,6 +320,7 @@ export async function saveManualModel(input: ManualModelInput, writeBackend: boo
 
   const response = await fetch("/local-config/models", {
     method: "POST",
+    credentials: "same-origin",
     headers: {
       "Content-Type": "application/json",
       ...getAuthHeaders(),
@@ -344,6 +347,7 @@ export async function saveManualModel(input: ManualModelInput, writeBackend: boo
 export async function restartMimoServer(): Promise<{ ok: boolean; url?: string }> {
   const response = await fetch("/local-config/restart-mimo", {
     method: "POST",
+    credentials: "same-origin",
     headers: {
       "Content-Type": "application/json",
       ...getAuthHeaders(),
@@ -359,6 +363,7 @@ export async function restartMimoServer(): Promise<{ ok: boolean; url?: string }
 export async function runLocalPrompt(input: { model: string; prompt: string }): Promise<{ text: string }> {
   const response = await fetch("/local-run", {
     method: "POST",
+    credentials: "same-origin",
     headers: {
       "Content-Type": "application/json",
       ...getAuthHeaders(),
@@ -385,6 +390,7 @@ export async function runLocalPromptStream(
 ) {
   const response = await fetch("/local-run/stream", {
     method: "POST",
+    credentials: "same-origin",
     headers: {
       "Content-Type": "application/json",
       ...getAuthHeaders(),
@@ -425,4 +431,18 @@ export async function runLocalPromptStream(
       if (event.type === "done") handlers.onDone?.()
     }
   }
+}
+
+export async function loginWithToken(token: string): Promise<void> {
+  const response = await fetch("/login", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  })
+  if (!response.ok) throw new Error(response.status === 401 ? "认证令牌无效" : `HTTP ${response.status}`)
+}
+
+export async function logout(): Promise<void> {
+  await fetch("/logout", { method: "POST", credentials: "same-origin" })
 }

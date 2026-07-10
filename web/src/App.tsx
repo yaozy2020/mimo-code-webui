@@ -18,16 +18,10 @@ function AppContent() {
   const [showSidebar, setShowSidebar] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const dispatch = useAppDispatch()
-  const { settings, authRequired } = useAppState()
+  const { settings } = useAppState()
 
   useStreamingMessage()
   useMimoStatus()
-
-  useEffect(() => {
-    if (authRequired && !settings.authToken) {
-      dispatch({ type: "SET_AUTH_DIALOG_OPEN", open: true })
-    }
-  }, [authRequired, settings.authToken, dispatch])
 
   useEffect(() => {
     let cancelled = false

@@ -54,6 +54,11 @@ try {
   assert.equal("workspaceRoot" in statusJson.mimo, false, "public /status should not expose workspaceRoot")
   assert.equal("projectServers" in statusJson.mimo, false, "public /status should not expose managed project servers")
   assert.equal("config" in statusJson, false, "public /status should not expose config summary")
+  assert.match(status.headers.get("x-request-id") ?? "", /\S+/, "/status should include a request id")
+
+  const providedRequestID = "test-request-id-123"
+  const requestIDStatus = await fetch(`${url}/status`, { headers: { "X-Request-ID": providedRequestID } })
+  assert.equal(requestIDStatus.headers.get("x-request-id"), providedRequestID, "server should preserve incoming request id")
 
   const unauthenticatedLocalStatus = await fetch(`${url}/local-status`)
   assert.equal(unauthenticatedLocalStatus.status, 401, "/local-status should require auth")
@@ -65,6 +70,24 @@ try {
   const authenticatedLocalStatusBody = await authenticatedLocalStatus.text()
   assert.equal(authenticatedLocalStatusBody.includes("workspaceRoot"), true)
   assert.equal(authenticatedLocalStatusBody.includes("sk-secret"), false)
+
+  const login = await fetch(`${url}/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: "secret-token" }),
+  })
+  assert.equal(login.status, 204, "/login should accept the configured auth token")
+  const cookie = login.headers.get("set-cookie") ?? ""
+  assert.match(cookie, /mimo_webui_auth=/, "/login should set auth cookie")
+  assert.match(cookie, /HttpOnly/i, "auth cookie should be HttpOnly")
+  assert.match(cookie, /SameSite=Lax/i, "auth cookie should be SameSite=Lax")
+
+  const cookieLocalStatus = await fetch(`${url}/local-status`, { headers: { Cookie: cookie } })
+  assert.equal(cookieLocalStatus.status, 200, "auth cookie should authorize protected local routes")
+
+  const logout = await fetch(`${url}/logout`, { method: "POST", headers: { Cookie: cookie } })
+  assert.equal(logout.status, 204, "/logout should clear auth cookie")
+  assert.match(logout.headers.get("set-cookie") ?? "", /Max-Age=0/i)
 
   const unauthenticatedRun = await fetch(`${url}/local-run`, {
     method: "POST",

@@ -13,6 +13,7 @@ type HandlerResult<T> = T | Promise<T>
 const MAX_LOCAL_PROMPT_LENGTH = 50000
 const JSON_BODY_LIMIT = "256kb"
 const DEFAULT_RATE_LIMIT = { windowMs: 60_000, max: 120 }
+const AUTH_COOKIE_NAME = "mimo_webui_auth"
 
 export interface AppOptions {
   authToken?: string
@@ -42,8 +43,31 @@ function publicError(message: string) {
   return { error: message }
 }
 
-function logRouteError(context: string, error: unknown) {
-  console.error(`[app] ${context}:`, error instanceof Error ? error.message : error)
+function logRouteError(context: string, error: unknown, req?: Request) {
+  const requestID = req?.headers["x-request-id"]
+  const prefix = typeof requestID === "string" ? `[app] [${requestID}]` : "[app]"
+  console.error(`${prefix} ${context}:`, error instanceof Error ? error.message : error)
+}
+
+function parseCookies(header: string | undefined) {
+  const cookies = new Map<string, string>()
+  if (!header) return cookies
+  for (const item of header.split(";")) {
+    const [rawName, ...rawValue] = item.trim().split("=")
+    if (!rawName) continue
+    cookies.set(rawName, decodeURIComponent(rawValue.join("=")))
+  }
+  return cookies
+}
+
+function authCookie(token: string, maxAge: number) {
+  return `${AUTH_COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`
+}
+
+function tokensEqual(token: string, expectedHash: Buffer | null) {
+  if (!expectedHash) return false
+  const tokenHash = crypto.createHash("sha256").update(token).digest()
+  return crypto.timingSafeEqual(tokenHash, expectedHash)
 }
 
 function createRateLimitMiddleware(input?: { windowMs: number; max: number }) {
@@ -85,13 +109,14 @@ function createAuthMiddleware(authToken?: string) {
     if (!authToken) return next()
 
     const auth = req.headers.authorization
-    if (!auth || !auth.startsWith("Bearer ")) {
+    const bearerToken = auth?.startsWith("Bearer ") ? auth.slice(7) : undefined
+    const cookieToken = parseCookies(req.headers.cookie).get(AUTH_COOKIE_NAME)
+    const token = bearerToken || cookieToken
+    if (!token) {
       return res.status(401).json({ error: "Unauthorized", authRequired: true })
     }
 
-    const token = auth.slice(7)
-    const tokenHash = crypto.createHash("sha256").update(token).digest()
-    if (!expectedHash || !crypto.timingSafeEqual(tokenHash, expectedHash)) {
+    if (!tokensEqual(token, expectedHash)) {
       return res.status(401).json({ error: "Invalid token", authRequired: true })
     }
 
@@ -105,6 +130,14 @@ export function createApp(options: AppOptions) {
   const rateLimitMiddleware = createRateLimitMiddleware(options.rateLimit)
 
   app.use(cors({ origin: false }))
+  app.use((req, res, next) => {
+    const requestID = typeof req.headers["x-request-id"] === "string" && req.headers["x-request-id"].trim()
+      ? req.headers["x-request-id"].trim()
+      : crypto.randomUUID()
+    req.headers["x-request-id"] = requestID
+    res.setHeader("X-Request-ID", requestID)
+    next()
+  })
   app.use((req, res, next) => {
     if (req.path.startsWith("/api")) return next()
     express.json({ limit: JSON_BODY_LIMIT })(req, res, next)
@@ -140,6 +173,26 @@ export function createApp(options: AppOptions) {
     })
   })
 
+  app.post("/login", (req, res) => {
+    if (!options.authToken) {
+      res.status(204).end()
+      return
+    }
+    const expectedHash = crypto.createHash("sha256").update(options.authToken).digest()
+    const { token } = req.body as { token?: string }
+    if (!token || !tokensEqual(token, expectedHash)) {
+      res.status(401).json({ error: "Invalid token", authRequired: true })
+      return
+    }
+    res.setHeader("Set-Cookie", authCookie(token, 60 * 60 * 24 * 30))
+    res.status(204).end()
+  })
+
+  app.post("/logout", (_req, res) => {
+    res.setHeader("Set-Cookie", authCookie("", 0))
+    res.status(204).end()
+  })
+
   app.get("/local-status", authMiddleware, async (req, res) => {
     res.json(await createDetailedStatus(req))
   })
@@ -160,7 +213,7 @@ export function createApp(options: AppOptions) {
       const model = options.addMimoModelConfig(req.body as ManualModelInput)
       res.json({ model })
     } catch (error) {
-      logRouteError("failed to save model config", error)
+      logRouteError("failed to save model config", error, req)
       res.status(400).json(publicError("Invalid model configuration"))
     }
   })
@@ -173,7 +226,7 @@ export function createApp(options: AppOptions) {
       }
       res.json(await options.probeNativeModel({ baseUrl: options.mimoInfo.url, model }))
     } catch (error) {
-      logRouteError("failed to probe native model", error)
+      logRouteError("failed to probe native model", error, req)
       res.status(500).json(publicError("Failed to probe native model"))
     }
   })
@@ -186,7 +239,7 @@ export function createApp(options: AppOptions) {
       }
       res.json({ ok: true, url: result.url })
     } catch (error) {
-      logRouteError("failed to restart mimo serve", error)
+      logRouteError("failed to restart mimo serve", error, _req)
       res.status(500).json(publicError("Failed to restart mimo serve"))
     }
   })
@@ -203,7 +256,7 @@ export function createApp(options: AppOptions) {
       }
       res.json(await options.runMimoPrompt({ model, prompt }))
     } catch (error) {
-      logRouteError("local run failed", error)
+      logRouteError("local run failed", error, req)
       res.status(500).json(publicError("Local run failed"))
     }
   })
@@ -242,7 +295,7 @@ export function createApp(options: AppOptions) {
       )
     } catch (error) {
       if (!abort.signal.aborted) {
-        logRouteError("local stream failed", error)
+        logRouteError("local stream failed", error, req)
         send({ type: "error", error: "Local stream failed" })
       }
     } finally {
@@ -266,7 +319,7 @@ export function createApp(options: AppOptions) {
         validateWorkspaceDirectory(directory.trim(), options.workspaceRoot)
         next()
       } catch (error) {
-        logRouteError("invalid workspace directory", error)
+        logRouteError("invalid workspace directory", error, req)
         res.status(400).json(publicError("Invalid workspace directory"))
       }
     })

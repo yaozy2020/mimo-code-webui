@@ -5,8 +5,10 @@ import { Button } from "@/components/ui/button"
 import { nextStreamingDisplay } from "@/lib/streamingDisplay"
 import { formatMessageTime } from "@/lib/time"
 import type { Message } from "@/types"
+import { inlineCodeClassName } from "./codeDisplay"
 import { getSafeExternalHref } from "./linkSafety"
 import { getVisibleAttachments } from "./messageAttachments"
+import { toolTaskTitle } from "./toolDisplay"
 
 interface MessageBubbleProps {
   message: Message
@@ -33,7 +35,7 @@ function toolActionLabel(toolName?: string): string {
   if (name.includes("read") || name.includes("glob") || name.includes("grep")) return "读取"
   if (name.includes("edit") || name.includes("write") || name.includes("apply")) return "编辑"
   if (name.includes("bash") || name.includes("shell") || name.includes("run")) return "运行"
-  if (name.includes("task") || name.includes("todo")) return "待办"
+  if (name.includes("task") || name.includes("todo")) return "任务"
   return "操作"
 }
 
@@ -142,7 +144,7 @@ function AssistantMarkdown({ content }: { content: string }) {
           code: ({ className, children, ...props }) => {
             const language = languageFromClassName(className)
             if (!className) {
-              return <code className="rounded-md border border-slate-300/80 bg-slate-100 px-1.5 py-0.5 font-mono text-[0.9em] text-slate-950 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.7)] dark:border-slate-600/80 dark:bg-slate-800 dark:text-slate-50 dark:shadow-none" {...props}>{children}</code>
+              return <code className={inlineCodeClassName(children)} {...props}>{children}</code>
             }
             return (
               <code className="block min-w-0 whitespace-pre font-mono" data-language={language} {...props}>
@@ -176,6 +178,7 @@ function CollapsibleTool({ part }: { part: NonNullable<Message["parts"]>[number]
   const Icon = toolIcon(part.tool)
   const action = toolActionLabel(part.tool)
   const target = toolTargetPath(part)
+  const taskTitle = toolTaskTitle(part)
   const detail = toolDetailSummary(part)
   const isDone = status === "completed" || status === "success" || status === "done"
 
@@ -188,9 +191,9 @@ function CollapsibleTool({ part }: { part: NonNullable<Message["parts"]>[number]
       >
         <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         <span className="shrink-0 text-xs font-medium text-muted-foreground">{action}</span>
-        {target && (
+        {(taskTitle || target) && (
           <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground/80">
-            {target}
+            {taskTitle || target}
           </span>
         )}
         {detail && <span className="shrink-0 text-xs text-muted-foreground">{detail}</span>}

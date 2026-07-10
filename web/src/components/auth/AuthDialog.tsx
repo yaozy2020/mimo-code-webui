@@ -9,14 +9,24 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { useAppDispatch, useAppState } from "@/stores/appStore"
+import { loginWithToken } from "@/api/client"
 
 export function AuthDialog() {
   const dispatch = useAppDispatch()
   const { authDialogOpen, settings } = useAppState()
   const [token, setToken] = useState(settings.authToken)
+  const [error, setError] = useState<string | null>(null)
 
-  const handleSubmit = () => {
-    dispatch({ type: "UPDATE_SETTINGS", settings: { authToken: token } })
+  const handleSubmit = async () => {
+    setError(null)
+    try {
+      await loginWithToken(token)
+    } catch (error) {
+      setError(error instanceof Error ? error.message : String(error))
+      return
+    }
+    localStorage.removeItem("mimo-webui-auth-token")
+    dispatch({ type: "UPDATE_SETTINGS", settings: { authToken: "" } })
     dispatch({ type: "SET_AUTH_DIALOG_OPEN", open: false })
     window.location.reload()
   }
@@ -36,6 +46,7 @@ export function AuthDialog() {
           onChange={(e) => setToken(e.target.value)}
           placeholder="请输入 Bearer token..."
         />
+        {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
       </div>
       <DialogFooter>
         <Button onClick={handleSubmit}>提交</Button>

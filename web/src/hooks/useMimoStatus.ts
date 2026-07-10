@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { fetchStatus } from "@/api/client"
+import { AuthRequiredError, fetchLocalStatus, fetchStatus } from "@/api/client"
 import { useAppDispatch } from "@/stores/appStore"
 
 export function useMimoStatus(pollInterval = 5000) {
@@ -35,6 +35,13 @@ export function useMimoStatus(pollInterval = 5000) {
             })
           }
           dispatch({ type: "SET_AUTH_REQUIRED", required: authRequired })
+          if (authRequired) {
+            try {
+              await fetchLocalStatus()
+            } catch (error) {
+              if (error instanceof AuthRequiredError) dispatch({ type: "SET_AUTH_DIALOG_OPEN", open: true })
+            }
+          }
           if (!authRequired && localStorage.getItem("mimo-webui-auth-token")) {
             dispatch({ type: "UPDATE_SETTINGS", settings: { authToken: "" } })
           }
