@@ -58,6 +58,7 @@ MIMO_PORT=4096
 AUTH_TOKEN=replace-with-a-long-random-token
 MIMO_CONFIG_PATH=/home/mimo-webui/.config/mimocode/config.json
 MIMO_WORKSPACE_ROOT=/srv/workspaces
+MIMO_SERVE_CWD=/srv/workspaces
 MIMO_WEBUI_STRICT_RELEASE=true
 EOF
 sudo chmod 640 /etc/mimo-code-webui/webui.env
@@ -72,6 +73,7 @@ Notes:
 - Set `MIMO_HOME=/path/to/home` only when the service must use a different home directory for MiMo config and state.
 - Set `MIMO_DATA_HOME` and `MIMO_STATE_HOME` only when the service account cannot write to its default XDG data/state paths.
 - Set `MIMO_WORKSPACE_ROOT` to the parent directory that WebUI sessions are allowed to use.
+- Set `MIMO_SERVE_CWD` to the directory where the base `mimo serve` process should start. It is usually the same as `MIMO_WORKSPACE_ROOT`, but source checkouts may intentionally use `MIMO_WORKSPACE_ROOT=/` with a narrower `MIMO_SERVE_CWD`.
 - Keep `MIMO_WEBUI_STRICT_RELEASE=true` for production releases so startup fails fast if dependencies or build output are missing.
 
 Make sure the service user can read the MiMo config and workspace root:
@@ -140,6 +142,32 @@ HOST=0.0.0.0 PORT=8080 AUTH_TOKEN=replace-with-a-long-random-token ./scripts/sta
 
 Open `http://<server-ip>:8080` from another device. Do not expose direct LAN mode without `AUTH_TOKEN` except for temporary trusted testing.
 
+## Source Checkout On NAS Or Local Servers
+
+For a source checkout, prefer the diagnostic wrapper instead of hand-written
+`kill` and `npm start` commands:
+
+```bash
+cd /vol2/1000/下载/mimo/mimo-code-webui
+AUTH_TOKEN=replace-with-a-long-random-token ./scripts/run-source.sh --restart
+```
+
+The wrapper keeps the two directory concepts separate:
+
+- `MIMO_WORKSPACE_ROOT` controls which workspace directories WebUI accepts. The source wrapper defaults it to `/` so sessions can be created outside the WebUI repository.
+- `MIMO_SERVE_CWD` controls where the base `mimo serve` process is launched. The source wrapper defaults it to the parent of the WebUI repository, such as `/vol2/1000/下载`, because `mimo serve` may reject `/` as a project directory even when WebUI is allowed to browse broad workspace roots.
+
+If old MiMo config files shadow the intended `~/.config/mimocode/mimocode.jsonc`, clean only the known generated/legacy files before startup:
+
+```bash
+AUTH_TOKEN=replace-with-a-long-random-token ./scripts/run-source.sh --restart --clean-poisoned-config
+```
+
+The wrapper removes `~/.mimo/mimo.config.json` and `~/.config/mimocode/config.json` only when `--clean-poisoned-config` is passed. It leaves `~/.config/mimocode/mimocode.jsonc` untouched.
+When `MIMO_CONFIG_PATH` is not already set and `~/.config/mimocode/mimocode.jsonc` exists, the wrapper points WebUI and `mimo serve` at that file so `scripts/start.sh` does not recreate `config.json` as the default config source.
+
+Keep one deployment user for the checkout, build output, `node_modules`, and runtime process. A typical failure mode is building as one user and starting as another, which can make models disappear or leave sessions blank because the runtime cannot read config, build output, or workspace directories.
+
 ## Upgrade
 
 Install the new release beside the old one, then move the `current` symlink:
@@ -187,3 +215,5 @@ npm run package:release
 - `/status` is reachable but chat requests fail: check `mimo --version`, `MIMO_CONFIG_PATH`, and `journalctl -u mimo-code-webui` for MiMo startup errors.
 - LAN users see the page but API calls fail with 401: enter the same `AUTH_TOKEN` in the WebUI Settings panel.
 - Workspace creation is rejected: set `MIMO_WORKSPACE_ROOT` to a parent directory that contains the requested workspace and is readable by the service user.
+- Model list is empty after startup: check `/status` for the `mimo.version`, confirm `mimo serve` is not an old process reused on `MIMO_PORT`, and verify the runtime user can read the intended MiMo config.
+- `mimo serve` reports `Access denied` when `MIMO_WORKSPACE_ROOT=/`: set `MIMO_SERVE_CWD` to a real parent directory that covers your projects, for example `/vol2/1000/下载`, while leaving `MIMO_WORKSPACE_ROOT=/` if broad WebUI workspace access is required.

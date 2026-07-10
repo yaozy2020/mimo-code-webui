@@ -22,6 +22,7 @@ const MIMO_PORT_EXPLICITLY_SET = process.env.MIMO_PORT !== undefined
 const AUTH_TOKEN = process.env.AUTH_TOKEN
 const ALLOW_UNAUTHENTICATED_LAN = process.env.ALLOW_UNAUTHENTICATED_LAN === "true"
 const MIMO_WORKSPACE_ROOT = path.resolve(process.env.MIMO_WORKSPACE_ROOT || getProjectRoot())
+const MIMO_SERVE_CWD = path.resolve(process.env.MIMO_SERVE_CWD || MIMO_WORKSPACE_ROOT)
 const MIMO_HEALTH_INTERVAL_MS = Number(process.env.MIMO_HEALTH_INTERVAL_MS) || 10000
 
 function isPortAvailable(port: number, host: string): Promise<boolean> {
@@ -115,8 +116,8 @@ async function main() {
       throw new Error("MiMo-Code CLI (mimo) not found")
     }
 
-    console.log(`[server] starting mimo serve on ${host}:${port} with workspace root ${workspaceRoot}...`)
-    const info = await startMimoServer(host, port, workspaceRoot)
+    console.log(`[server] starting mimo serve on ${host}:${port} with workspace root ${workspaceRoot} and cwd ${MIMO_SERVE_CWD}...`)
+    const info = await startMimoServer(host, port, MIMO_SERVE_CWD)
     console.log(`[server] mimo serve ready at ${info.url} (pid ${info.pid})`)
     return info
   }
