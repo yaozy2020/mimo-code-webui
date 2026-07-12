@@ -11,12 +11,15 @@ export function usePromptController(input: { activeSessionID: string | null; act
   const dispatch = useAppDispatch()
   const { agentStatus, settings } = useAppState()
   const { activeSessionID, activeDirectory } = input
-  const localAbortRef = useRef<{ controller: AbortController; sessionID: string; directory?: string } | null>(null)
+  const localAbortRef = useRef(new Map<string, AbortController>())
   const busy = activeSessionID ? agentStatus[activeSessionID]?.state === "busy" : false
 
   const handleSend = useCallback(
     async (text: string, mode: PromptMode, attachments: PendingAttachment[] = []) => {
       if (!activeSessionID) return
+      let localRunSelected = false
+      const requestKey = `${activeDirectory ?? ""}\n${activeSessionID}`
+      let localAbort: AbortController | null = null
       dispatch({
         type: "SET_AGENT_STATUS",
         sessionID: activeSessionID,
@@ -53,8 +56,6 @@ export function usePromptController(input: { activeSessionID: string | null; act
         ],
         time: { created: Date.now() },
       }
-      dispatch({ type: "ADD_MESSAGE", sessionID: activeSessionID, message: userMessage })
-
       try {
         const selectedModel = modelSelectionToPayload(settings.model)
         const runtimeModels = await fetchRuntimeModels()
@@ -62,8 +63,14 @@ export function usePromptController(input: { activeSessionID: string | null; act
         const route = chooseModelRoute({ selectedModel, nativeModelKeys: nativeKeys })
 
         if (route === "local-run") {
-          const localAbort = new AbortController()
-          localAbortRef.current = { controller: localAbort, sessionID: activeSessionID, directory: activeDirectory }
+          localRunSelected = true
+          const unsupportedAttachment = attachments.find((attachment) => typeof attachment.content !== "string")
+          if (unsupportedAttachment) {
+            throw new Error(`当前模型不支持图片或二进制附件：${unsupportedAttachment.filename}`)
+          }
+          dispatch({ type: "ADD_MESSAGE", sessionID: activeSessionID, message: { ...userMessage, optimistic: false, localOnly: true } })
+          localAbort = new AbortController()
+          localAbortRef.current.set(requestKey, localAbort)
           const assistantMessageID = createClientID("msg")
           dispatch({
             type: "ADD_MESSAGE",
@@ -73,6 +80,7 @@ export function usePromptController(input: { activeSessionID: string | null; act
               sessionID: activeSessionID,
               role: "assistant",
               content: "",
+              localOnly: true,
               time: { created: Date.now() },
             },
           })
@@ -108,10 +116,11 @@ export function usePromptController(input: { activeSessionID: string | null; act
             sessionID: activeSessionID,
             status: { sessionID: activeSessionID, state: "idle" },
           })
-          localAbortRef.current = null
+          if (localAbortRef.current.get(requestKey) === localAbort) localAbortRef.current.delete(requestKey)
           return
         }
 
+        dispatch({ type: "ADD_MESSAGE", sessionID: activeSessionID, message: userMessage })
         await sendPrompt(activeSessionID, {
           agent: mode,
           model: settings.model,
@@ -119,7 +128,7 @@ export function usePromptController(input: { activeSessionID: string | null; act
           directory: activeDirectory,
         })
       } catch (error) {
-        localAbortRef.current = null
+        if (localAbortRef.current.get(requestKey) === localAbort) localAbortRef.current.delete(requestKey)
         if (error instanceof DOMException && error.name === "AbortError") {
           dispatch({ type: "SET_AGENT_STATUS", sessionID: activeSessionID, status: { sessionID: activeSessionID, state: "idle" } })
           return
@@ -135,6 +144,7 @@ export function usePromptController(input: { activeSessionID: string | null; act
           sessionID: activeSessionID,
           role: "assistant",
           content: `[Error: ${(error as Error).message}]`,
+          localOnly: localRunSelected,
           time: { created: Date.now() },
         }
         dispatch({ type: "ADD_MESSAGE", sessionID: activeSessionID, message: errorMessage })
@@ -145,10 +155,11 @@ export function usePromptController(input: { activeSessionID: string | null; act
 
   const handleAbort = useCallback(async () => {
     if (!activeSessionID) return
-    const localRequest = localAbortRef.current
-    if (localRequest && localRequest.sessionID === activeSessionID && localRequest.directory === activeDirectory) {
-      localRequest.controller.abort()
-      localAbortRef.current = null
+    const requestKey = `${activeDirectory ?? ""}\n${activeSessionID}`
+    const localRequest = localAbortRef.current.get(requestKey)
+    if (localRequest) {
+      localRequest.abort()
+      localAbortRef.current.delete(requestKey)
       return
     }
     await abortSession(activeSessionID, activeDirectory)

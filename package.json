@@ -10,7 +10,7 @@
   ],
   "scripts": {
     "dev": "concurrently \"npm run dev -w server\" \"npm run dev -w web\"",
-    "preverify": "node scripts/backup-state.test.mjs && node scripts/send-alert.test.mjs && node web/src/components/ui/dialogText.test.mjs && node --import tsx web/src/api/sseParser.test.mjs && node --import tsx server/src/proxy.test.mjs",
+    "preverify": "node scripts/backup-state.test.mjs && node scripts/send-alert.test.mjs && node web/src/components/ui/dialogText.test.mjs && node web/src/components/chat/localRunSafety.test.mjs && node --import tsx web/src/api/sseParser.test.mjs && node --import tsx server/src/proxy.test.mjs && node --import tsx server/src/localRunDisconnect.test.mjs",
     "build": "npm run build -w web && npm run build -w server",
     "start": "npm start -w server",
     "typecheck": "npm run typecheck -w server && npm run typecheck -w web",

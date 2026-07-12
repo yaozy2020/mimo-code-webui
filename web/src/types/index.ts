@@ -43,6 +43,7 @@ export interface Message {
     }
   }
   optimistic?: boolean
+  localOnly?: boolean
   errorKey?: string
   time?: {
     created?: number

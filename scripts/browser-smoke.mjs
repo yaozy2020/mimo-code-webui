@@ -6,6 +6,12 @@ const { chromium } = await import("@playwright/test")
 const browser = await chromium.launch({ headless: true })
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
+  if (process.env.SMOKE_AUTH_TOKEN) {
+    const login = await page.request.post(new URL("/login", url).toString(), {
+      data: { token: process.env.SMOKE_AUTH_TOKEN },
+    })
+    if (!login.ok()) throw new Error(`Smoke login failed with HTTP ${login.status()}`)
+  }
   const consoleErrors = []
   page.on("console", (message) => {
     if (message.type() === "error") consoleErrors.push(message.text())

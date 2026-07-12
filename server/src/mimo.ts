@@ -133,9 +133,11 @@ export function detectMimo(): { command: string; path: string } | null {
 export async function listBuiltinModels(): Promise<Array<{ providerID: string; modelID: string; name: string }>> {
   const mimo = detectMimo()
   if (!mimo) return []
+  const configHome = fs.mkdtempSync(path.join(os.tmpdir(), "mimo-models-"))
 
   return new Promise((resolve) => {
-    execFile(mimo.command, ["models"], { timeout: 10000 }, (error, stdout) => {
+    execFile(mimo.command, ["models"], { timeout: 10000, env: { ...process.env, XDG_CONFIG_HOME: configHome } }, (error, stdout) => {
+      fs.rmSync(configHome, { recursive: true, force: true })
       if (error) {
         console.warn("[mimo] failed to list models:", error.message)
         resolve([])

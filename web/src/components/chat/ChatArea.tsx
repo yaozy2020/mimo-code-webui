@@ -96,7 +96,7 @@ export function ChatArea({ onSlashAction }: ChatAreaProps) {
         <WorkspaceSessionDialog open={workspaceDialogOpen} onOpenChange={setWorkspaceDialogOpen} defaultWorkspace={activeDirectory} />
       </div>
       {activeSessionID && showFileChanges && (sessionDiffs[activeSessionID]?.length ?? 0) > 0 && (
-        <FileChangesPanel diffs={sessionDiffs[activeSessionID]} onClose={() => setShowFileChanges(false)} />
+        <FileChangesPanel key={activeSessionID} diffs={sessionDiffs[activeSessionID]} directory={activeDirectory} onClose={() => setShowFileChanges(false)} />
       )}
     </div>
   )

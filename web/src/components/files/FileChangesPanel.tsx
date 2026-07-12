@@ -7,21 +7,23 @@ import { cn } from "@/lib/utils"
 
 interface FileChangesPanelProps {
   diffs: SnapshotFileDiff[]
+  directory?: string
   onClose: () => void
 }
 
-export function FileChangesPanel({ diffs, onClose }: FileChangesPanelProps) {
+export function FileChangesPanel({ diffs, directory, onClose }: FileChangesPanelProps) {
   const [selectedFile, setSelectedFile] = useState(diffs[0]?.file ?? "")
   const [content, setContent] = useState<FileContent | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const selectedDiff = diffs.find((diff) => diff.file === selectedFile) ?? diffs[0]
+  const diffKey = diffs.map((diff) => diff.file).join("\n")
 
   useEffect(() => {
-    if (!selectedDiff) return
-    setSelectedFile((current) => current || selectedDiff.file)
-  }, [selectedDiff])
+    setSelectedFile(diffs[0]?.file ?? "")
+    setContent(null)
+  }, [diffKey, directory])
 
   useEffect(() => {
     if (!selectedFile) return
@@ -29,7 +31,7 @@ export function FileChangesPanel({ diffs, onClose }: FileChangesPanelProps) {
     setLoading(true)
     setError(null)
 
-    readFileContent(selectedFile)
+    readFileContent(selectedFile, directory)
       .then((result) => {
         if (!cancelled) setContent(result)
       })
@@ -43,7 +45,7 @@ export function FileChangesPanel({ diffs, onClose }: FileChangesPanelProps) {
     return () => {
       cancelled = true
     }
-  }, [selectedFile])
+  }, [directory, selectedFile])
 
   return (
     <aside className="fixed inset-x-2 bottom-2 top-16 z-30 flex flex-col overflow-hidden rounded-2xl border bg-background shadow-2xl lg:static lg:inset-auto lg:z-auto lg:w-[480px] lg:rounded-none lg:border-y-0 lg:border-r-0 lg:shadow-xl">

@@ -301,6 +301,9 @@ export function createApp(options: AppOptions) {
     const abort = new AbortController()
     const timeout = setTimeout(() => abort.abort(), 120000)
     req.on("aborted", () => abort.abort())
+    res.on("close", () => {
+      if (!res.writableEnded) abort.abort()
+    })
 
     try {
       const config = options.resolveOpenAICompatibleModel(model)

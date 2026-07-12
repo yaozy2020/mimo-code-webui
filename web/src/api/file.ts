@@ -8,6 +8,8 @@ export interface FileContent {
   mimeType?: string
 }
 
-export async function readFileContent(path: string): Promise<FileContent> {
-  return fetchJson<FileContent>(`/file/content?path=${encodeURIComponent(path)}`)
+export async function readFileContent(path: string, directory?: string): Promise<FileContent> {
+  const query = new URLSearchParams({ path })
+  if (directory) query.set("directory", directory)
+  return fetchJson<FileContent>(`/file/content?${query.toString()}`)
 }

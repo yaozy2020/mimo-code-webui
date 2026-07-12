@@ -56,6 +56,8 @@ const OWNED_SESSION_IDS_KEY = "mimo-webui-owned-session-ids"
 const ATTACHED_SESSION_IDS_KEY = "mimo-webui-attached-session-ids"
 const CURRENT_WORKSPACE_KEY = "mimo-webui-current-workspace"
 const SESSION_CACHE_KEY = "mimo-webui-session-cache"
+const LOCAL_MESSAGE_CACHE_KEY = "mimo-webui-local-messages"
+const MAX_LOCAL_MESSAGE_CACHE_BYTES = 512 * 1024
 
 function getStoredSessionIDs(key: string) {
   try {
@@ -152,6 +154,56 @@ function removeCachedSession(sessionID: string) {
   setCachedSessions(getCachedSessions().filter((session) => session.id !== sessionID))
 }
 
+function getCachedLocalMessages(): Record<string, Message[]> {
+  try {
+    const value = sessionStorage.getItem(LOCAL_MESSAGE_CACHE_KEY)
+    if (!value) return {}
+    const parsed = JSON.parse(value) as Record<string, Message[]>
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {}
+    return Object.fromEntries(
+      Object.entries(parsed).flatMap(([sessionID, messages]) =>
+        Array.isArray(messages)
+          ? [[sessionID, messages.filter((message) => typeof message?.id === "string" && message.localOnly === true).slice(-100)]]
+          : [],
+      ),
+    )
+  } catch {
+    return {}
+  }
+}
+
+function setCachedLocalMessages(messages: Record<string, Message[]>) {
+  const localMessages = Object.fromEntries(
+    Object.entries(messages).slice(-20).flatMap(([sessionID, entries]) => {
+      const localEntries = entries
+        .filter((message) => message.localOnly)
+        .slice(-100)
+        .map((message) => ({
+          id: message.id,
+          sessionID: message.sessionID,
+          role: message.role,
+          content: message.content,
+          localOnly: true,
+          time: message.time,
+        }))
+      return localEntries.length ? [[sessionID, localEntries]] : []
+    }),
+  )
+  try {
+    let serialized = JSON.stringify(localMessages)
+    while (new Blob([serialized]).size > MAX_LOCAL_MESSAGE_CACHE_BYTES && Object.keys(localMessages).length > 0) {
+      const oldestSession = Object.keys(localMessages)[0]
+      const entries = localMessages[oldestSession]
+      if (entries.length > 1) entries.shift()
+      else delete localMessages[oldestSession]
+      serialized = JSON.stringify(localMessages)
+    }
+    sessionStorage.setItem(LOCAL_MESSAGE_CACHE_KEY, serialized)
+  } catch {
+    // Chat remains usable when browser storage is unavailable or full.
+  }
+}
+
 type AppAction =
   | { type: "SET_SESSIONS"; sessions: Session[] }
   | { type: "ADD_SESSION"; session: Session; owned?: boolean }
@@ -191,7 +243,7 @@ const initialState: AppState = {
   currentWorkspace: localStorage.getItem(CURRENT_WORKSPACE_KEY),
   ownedSessionIDs: [...getOwnedSessionIDs()],
   attachedSessionIDs: [...getAttachedSessionIDs()],
-  messages: {},
+  messages: getCachedLocalMessages(),
   status: {
     mimoHealthy: false,
     mimoUrl: "http://127.0.0.1:4096",
@@ -357,11 +409,15 @@ function appReducer(state: AppState, action: AppAction): AppState {
       forgetOwnedSessionID(action.sessionID)
       removeCachedSession(action.sessionID)
       if (state.activeSessionID === action.sessionID) localStorage.removeItem(ACTIVE_SESSION_KEY)
+      const detachedMessages = { ...state.messages }
+      delete detachedMessages[action.sessionID]
+      setCachedLocalMessages(detachedMessages)
       return {
         ...state,
         activeSessionID: state.activeSessionID === action.sessionID ? null : state.activeSessionID,
         ownedSessionIDs: [...getOwnedSessionIDs()],
         attachedSessionIDs: [...getAttachedSessionIDs()],
+        messages: detachedMessages,
       }
     case "UPDATE_SESSION": {
       const sessions = state.sessions.map((s) => (s.id === action.session.id ? action.session : s))
@@ -373,12 +429,16 @@ function appReducer(state: AppState, action: AppAction): AppState {
       forgetAttachedSessionID(action.sessionID)
       removeCachedSession(action.sessionID)
       if (state.activeSessionID === action.sessionID) localStorage.removeItem(ACTIVE_SESSION_KEY)
+      const remainingMessages = { ...state.messages }
+      delete remainingMessages[action.sessionID]
+      setCachedLocalMessages(remainingMessages)
       return {
         ...state,
         sessions: state.sessions.filter((s) => s.id !== action.sessionID),
         ownedSessionIDs: [...getOwnedSessionIDs()],
         attachedSessionIDs: [...getAttachedSessionIDs()],
         activeSessionID: state.activeSessionID === action.sessionID ? null : state.activeSessionID,
+        messages: remainingMessages,
       }
     case "SET_ACTIVE_SESSION":
       if (action.sessionID) {
@@ -397,17 +457,19 @@ function appReducer(state: AppState, action: AppAction): AppState {
       const existingById = new Map(existing.map((message) => [message.id, message]))
       const loadedMessages = action.messages.map((message) => mergeMessage(existingById.get(message.id), message))
       const loadedIds = new Set(loadedMessages.map((message) => message.id))
-      const optimisticMessages = existing.filter(
+      const localMessages = existing.filter(
         (message) =>
           !loadedIds.has(message.id) &&
-          message.optimistic,
+          (message.optimistic || message.localOnly),
       )
-      const nextMessages = normalizeMessages([...loadedMessages, ...optimisticMessages])
+      const nextMessages = normalizeMessages([...loadedMessages, ...localMessages])
       if (messagesEqual(existing, nextMessages)) return state
       const usage = contextUsageFromMessages(nextMessages, state.modelLimits)
+      const messages = { ...state.messages, [action.sessionID]: nextMessages }
+      setCachedLocalMessages(messages)
       return {
         ...state,
-        messages: { ...state.messages, [action.sessionID]: nextMessages },
+        messages,
         contextUsage: usage ? { ...state.contextUsage, [action.sessionID]: usage } : state.contextUsage,
       }
     }
@@ -441,29 +503,32 @@ function appReducer(state: AppState, action: AppAction): AppState {
               )
           : [...existing, action.message]
       const usage = contextUsageFromMessage(action.message, state.modelLimits)
+      const messages = { ...state.messages, [action.sessionID]: normalizeMessages(nextMessages) }
+      setCachedLocalMessages(messages)
       return {
         ...state,
-        messages: {
-          ...state.messages,
-          [action.sessionID]: normalizeMessages(nextMessages),
-        },
+        messages,
         contextUsage: usage ? { ...state.contextUsage, [action.sessionID]: usage } : state.contextUsage,
       }
     }
     case "UPDATE_MESSAGE": {
       const msgs = state.messages[action.sessionID] || []
+      const messages = {
+        ...state.messages,
+        [action.sessionID]: msgs.map((m) => (m.id === action.message.id ? action.message : m)),
+      }
+      setCachedLocalMessages(messages)
       return {
         ...state,
-        messages: {
-          ...state.messages,
-          [action.sessionID]: msgs.map((m) => (m.id === action.message.id ? action.message : m)),
-        },
+        messages,
       }
     }
     case "APPEND_MESSAGE_CONTENT": {
+      const messages = appendMessageContent(state.messages, action.sessionID, action.messageID, action.content)
+      setCachedLocalMessages(messages)
       return {
         ...state,
-        messages: appendMessageContent(state.messages, action.sessionID, action.messageID, action.content),
+        messages,
       }
     }
     case "SET_MESSAGE_CONTENT": {
@@ -471,9 +536,11 @@ function appReducer(state: AppState, action: AppAction): AppState {
       if (msgs.some((m) => m.id === action.messageID && m.content === action.content)) {
         return state
       }
+      const messages = setMessageContent(state.messages, action.sessionID, action.messageID, action.content)
+      setCachedLocalMessages(messages)
       return {
         ...state,
-        messages: setMessageContent(state.messages, action.sessionID, action.messageID, action.content),
+        messages,
       }
     }
     case "SET_STATUS":
