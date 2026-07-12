@@ -157,36 +157,80 @@ export async function listBuiltinModels(): Promise<Array<{ providerID: string; m
   })
 }
 
-export async function runMimoPrompt(input: { model: string; prompt: string }): Promise<{ text: string }> {
-  const mimo = detectMimo()
-  if (!mimo) throw new Error("MiMo-Code CLI (mimo) not found")
+interface RunMimoPromptProcessOptions {
+  spawn?: typeof nodeSpawn
+  platform?: NodeJS.Platform
+  termGraceMs?: number
+  killConfirmationMs?: number
+  killProcessGroup?: (pid: number, signal: NodeJS.Signals) => void
+}
+
+export async function runMimoPromptProcess(
+  command: string,
+  input: { model: string; prompt: string; signal: AbortSignal },
+  options: RunMimoPromptProcessOptions = {},
+): Promise<{ text: string }> {
+  const spawnProcess = options.spawn ?? nodeSpawn
+  const platform = options.platform ?? process.platform
+  const detached = platform !== "win32"
+  const proc = spawnProcess(command, createMimoRunArgs(input), {
+    cwd: process.cwd(),
+    env: process.env,
+    stdio: ["ignore", "pipe", "pipe"],
+    detached,
+  })
 
   return new Promise((resolve, reject) => {
-    const proc = nodeSpawn(mimo.command, createMimoRunArgs(input), {
-      cwd: process.cwd(),
-      env: process.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    })
-
     let stdout = ""
     let stderr = ""
-    const timer = setTimeout(() => {
-      proc.kill("SIGTERM")
-      reject(new Error("mimo run timed out"))
-    }, 120000)
+    let settling = false
+    const killProcessGroup = options.killProcessGroup ?? ((pid, signal) => process.kill(pid, signal))
+    const sendSignal = (signal: NodeJS.Signals) => {
+      try {
+        if (detached && proc.pid) killProcessGroup(-proc.pid, signal)
+        else proc.kill(signal)
+        return true
+      } catch (error) {
+        if (typeof error === "object" && error !== null && "code" in error && error.code === "ESRCH") return false
+        throw error
+      }
+    }
+    const settleAbort = async () => {
+      if (settling) return
+      settling = true
+      const reason = input.signal.reason ?? new DOMException("Aborted", "AbortError")
+      try {
+        if (proc.exitCode === null && proc.signalCode === null && !sendSignal("SIGTERM")) {
+          reject(reason)
+          return
+        }
+        if (await waitForProcessExit(proc, options.termGraceMs ?? 5000)) {
+          reject(reason)
+          return
+        }
+        if (proc.pid && sendSignal("SIGKILL")) {
+          await waitForProcessExit(proc, options.killConfirmationMs ?? 5000)
+        }
+        reject(reason)
+      } catch (error) {
+        reject(error)
+      }
+    }
+    if (input.signal.aborted) {
+      void settleAbort()
+      return
+    }
+    input.signal.addEventListener("abort", settleAbort, { once: true })
 
-    proc.stdout?.on("data", (chunk: Buffer) => {
-      stdout = appendProcessLog(stdout, chunk)
-    })
-    proc.stderr?.on("data", (chunk: Buffer) => {
-      stderr = appendProcessLog(stderr, chunk)
-    })
+    proc.stdout?.on("data", (chunk: Buffer) => { stdout = appendProcessLog(stdout, chunk) })
+    proc.stderr?.on("data", (chunk: Buffer) => { stderr = appendProcessLog(stderr, chunk) })
     proc.on("error", (error) => {
-      clearTimeout(timer)
-      reject(error)
+      input.signal.removeEventListener("abort", settleAbort)
+      if (!settling) reject(error)
     })
     proc.on("exit", (code) => {
-      clearTimeout(timer)
+      input.signal.removeEventListener("abort", settleAbort)
+      if (settling) return
       if (code !== 0) {
         reject(new Error(stderr.trim() || `mimo run exited with code ${code}`))
         return
@@ -194,24 +238,28 @@ export async function runMimoPrompt(input: { model: string; prompt: string }): P
 
       const textParts: string[] = []
       for (const line of stdout.split("\n").map((item) => item.trim()).filter(Boolean)) {
+        let event: { type?: string; part?: { type?: string; text?: string }; error?: { data?: { message?: string }; message?: string } }
         try {
-          const event = JSON.parse(line) as { type?: string; part?: { type?: string; text?: string }; error?: { data?: { message?: string }; message?: string } }
-          if (event.type === "error") {
-            reject(new Error(event.error?.data?.message || event.error?.message || "mimo run failed"))
-            return
-          }
-          if (event.part?.type === "text" && event.part.text) textParts.push(event.part.text)
-        } catch (error) {
-          if (!(error instanceof SyntaxError)) {
-            reject(error instanceof Error ? error : new Error(String(error)))
-            return
-          }
+          event = JSON.parse(line)
+        } catch {
+          reject(new Error("mimo run returned invalid JSON output"))
+          return
         }
+        if (event.type === "error") {
+          reject(new Error(event.error?.data?.message || event.error?.message || "mimo run failed"))
+          return
+        }
+        if (event.part?.type === "text" && event.part.text) textParts.push(event.part.text)
       }
-
-      resolve({ text: textParts.join("\n") || stdout.trim() })
+      resolve({ text: textParts.join("\n") })
     })
   })
+}
+
+export async function runMimoPrompt(input: { model: string; prompt: string; signal: AbortSignal }): Promise<{ text: string }> {
+  const mimo = detectMimo()
+  if (!mimo) throw new Error("MiMo-Code CLI (mimo) not found")
+  return runMimoPromptProcess(mimo.command, input)
 }
 
 export function createMimoRunArgs(input: { model: string; prompt: string }): string[] {

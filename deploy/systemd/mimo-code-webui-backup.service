@@ -8,8 +8,8 @@ OnFailure=mimo-code-webui-alert@%n.service
 Type=oneshot
 EnvironmentFile=/etc/mimo-code-webui/webui.env
 Environment=MIMO_BACKUP_OFFLINE=true
-ExecStart=/usr/bin/flock -n /run/lock/mimo-code-webui-deploy.lock /bin/sh -c '/bin/systemctl stop mimo-code-webui.service && /usr/bin/env node /opt/mimo-code-webui/current/scripts/backup-state.mjs'
-ExecStopPost=/bin/sh -c 'if [ -e /var/lib/mimo-code-webui/backup-status.json ]; then /bin/chgrp mimo-webui /var/lib/mimo-code-webui/backup-status.json; /bin/chmod 0640 /var/lib/mimo-code-webui/backup-status.json; fi; /bin/systemctl start mimo-code-webui.service'
+ExecStart=/usr/bin/env MIMO_BACKUP_OPERATION_ID=${INVOCATION_ID} /opt/mimo-code-webui/current/scripts/backup-service-state.sh run
+ExecStopPost=/usr/bin/env MIMO_BACKUP_OPERATION_ID=${INVOCATION_ID} /opt/mimo-code-webui/current/scripts/backup-service-state.sh restore
 UMask=0027
 NoNewPrivileges=true
 PrivateTmp=true

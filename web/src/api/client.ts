@@ -45,6 +45,13 @@ export class AuthRequiredError extends Error {
   }
 }
 
+export class ApiError extends Error {
+  constructor(message: string, readonly code?: string) {
+    super(message)
+    this.name = "ApiError"
+  }
+}
+
 export function parseSseFrames(buffer: string, flush = false) {
   const normalized = buffer.replace(/\r\n/g, "\n")
   const frames = normalized.split("\n\n")
@@ -218,8 +225,9 @@ export interface RuntimeModel {
   reasoning?: boolean
 }
 
-export async function fetchRuntimeModels(): Promise<RuntimeModel[]> {
-  const config = await fetchJson<RuntimeModelConfig>("/config")
+export async function fetchRuntimeModels(directory?: string, signal?: AbortSignal): Promise<RuntimeModel[]> {
+  const query = directory ? `?${new URLSearchParams({ directory })}` : ""
+  const config = await fetchJson<RuntimeModelConfig>(`/config${query}`, { signal })
   return Object.entries(config.provider ?? {}).flatMap(([provider, info]) =>
     Object.entries(info.models ?? {}).map(([id, model]) => ({
       id,
@@ -445,41 +453,65 @@ export async function runLocalPromptStream(
     signal: input.signal,
   })
   if (!response.ok) {
-    const data = (await response.json().catch(() => ({}))) as { error?: string }
-    throw new Error(data.error || `HTTP ${response.status}`)
+    const data = (await response.json().catch(() => ({}))) as { error?: string; code?: string }
+    throw new ApiError(data.error || `HTTP ${response.status}`, data.code)
   }
 
   const reader = response.body?.getReader()
   if (!reader) throw new Error("No stream body")
   const decoder = new TextDecoder()
   let buffer = ""
+  let reachedEof = false
 
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-
-    buffer += decoder.decode(value, { stream: true })
-    const parsed = parseSSEBuffer(buffer)
-    buffer = parsed.rest
-    for (const data of parsed.data) {
+  const processEvents = (dataItems: string[]) => {
+    for (const data of dataItems) {
       if (!data) continue
 
-      const event = JSON.parse(data) as { type?: string; text?: string; error?: string }
+      const event = JSON.parse(data) as { type?: string; text?: string; error?: string; code?: string }
       if (event.type === "start") handlers.onStart?.()
       if (event.type === "delta" && event.text) handlers.onDelta(event.text)
       if (event.type === "error") {
         handlers.onError?.(event.error || "模型调用失败")
-        throw new Error(event.error || "模型调用失败")
+        throw new ApiError(event.error || "模型调用失败", event.code)
       }
-      if (event.type === "done") handlers.onDone?.()
+      if (event.type === "done") {
+        handlers.onDone?.()
+        return true
+      }
     }
+    return false
   }
-  for (const data of parseSSEBuffer(buffer + decoder.decode(), true).data) {
-    if (!data) continue
-    const event = JSON.parse(data) as { type?: string; text?: string; error?: string }
-    if (event.type === "delta" && event.text) handlers.onDelta(event.text)
-    if (event.type === "error") throw new Error(event.error || "模型调用失败")
-    if (event.type === "done") handlers.onDone?.()
+
+  try {
+    let protocolDone = false
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) {
+        reachedEof = true
+        break
+      }
+
+      buffer += decoder.decode(value, { stream: true })
+      const parsed = parseSSEBuffer(buffer)
+      buffer = parsed.rest
+      protocolDone = processEvents(parsed.data)
+      if (protocolDone) break
+    }
+    if (!protocolDone) protocolDone = processEvents(parseSSEBuffer(buffer + decoder.decode(), true).data)
+    if (!protocolDone) throw new ApiError("模型响应流不完整：连接在 done 事件前结束", "STREAM_INCOMPLETE")
+  } finally {
+    if (!reachedEof) {
+      try {
+        void reader.cancel().catch(() => undefined)
+      } catch {
+        // Cleanup must not delay or replace the stream result.
+      }
+    }
+    try {
+      reader.releaseLock()
+    } catch {
+      // Cleanup must not replace the stream result or its primary error.
+    }
   }
 }
 

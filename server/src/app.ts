@@ -22,7 +22,7 @@ export interface AppOptions {
   host: string
   port: number
   workspaceRoot: string
-  mimoInfo: MimoInfo
+  getMimoInfo: () => MimoInfo
   isMimoManaged: () => boolean
   getMimoSupervisorStatus?: () => unknown
   checkHealth: (baseUrl: string) => Promise<{ healthy: boolean; version?: string }>
@@ -34,7 +34,7 @@ export interface AppOptions {
   addMimoModelConfig: (input: ManualModelInput) => unknown
   probeNativeModel: (input: { baseUrl: string; model: string }) => HandlerResult<unknown>
   restartMimo: () => Promise<{ ok: boolean; url?: string; error?: string }>
-  runMimoPrompt: (input: { model: string; prompt: string }) => HandlerResult<unknown>
+  runMimoPrompt: (input: { model: string; prompt: string; signal: AbortSignal }) => HandlerResult<unknown>
   runReadonlyCliCommand: (id: string) => HandlerResult<unknown>
   resolveOpenAICompatibleModel: (model: string) => OpenAIStreamModel
   streamOpenAICompatible: (input: OpenAIStreamInput, handlers: OpenAIStreamHandlers) => Promise<void>
@@ -42,6 +42,7 @@ export interface AppOptions {
   webDist?: string
   rateLimit?: { windowMs: number; max: number }
   getBackupStatus?: () => BackupStatus
+  localRunTimeoutMs?: number
 }
 
 function publicError(message: string) {
@@ -161,13 +162,14 @@ export function createApp(options: AppOptions) {
   app.use(handleJsonParseError)
 
   const createDetailedStatus = async (req: Request) => {
-    const health = await options.checkHealth(options.mimoInfo.url)
-    const pathInfo = health.healthy ? await options.getMimoPathInfo(options.mimoInfo.url) : null
+    const mimoInfo = options.getMimoInfo()
+    const health = await options.checkHealth(mimoInfo.url)
+    const pathInfo = health.healthy ? await options.getMimoPathInfo(mimoInfo.url) : null
     const hostHeader = req.headers.host || `${options.host}:${options.port}`
     return {
       webui: { port: options.port, host: options.host, url: `http://${hostHeader}` },
       mimo: {
-        ...options.mimoInfo,
+        ...mimoInfo,
         healthy: health.healthy,
         version: health.version,
         managed: options.isMimoManaged(),
@@ -183,7 +185,7 @@ export function createApp(options: AppOptions) {
   }
 
   app.get("/status", async (_req, res) => {
-    const health = await options.checkHealth(options.mimoInfo.url)
+    const health = await options.checkHealth(options.getMimoInfo().url)
     res.json({
       webui: { port: options.port, host: options.host },
       mimo: { healthy: health.healthy, version: health.version },
@@ -244,7 +246,7 @@ export function createApp(options: AppOptions) {
         res.status(400).json({ error: "model is required" })
         return
       }
-      res.json(await options.probeNativeModel({ baseUrl: options.mimoInfo.url, model }))
+      res.json(await options.probeNativeModel({ baseUrl: options.getMimoInfo().url, model }))
     } catch (error) {
       logRouteError("failed to probe native model", error, req)
       res.status(500).json(publicError("Failed to probe native model"))
@@ -264,20 +266,59 @@ export function createApp(options: AppOptions) {
     }
   })
   app.post("/local-run", async (req, res) => {
+    const { model, prompt } = req.body as { model?: string; prompt?: string }
+    if (!model || !prompt) {
+      res.status(400).json({ error: "model and prompt are required" })
+      return
+    }
+    if (prompt.length > MAX_LOCAL_PROMPT_LENGTH) {
+      res.status(413).json({ error: "prompt is too large" })
+      return
+    }
+
+    const abort = new AbortController()
+    let finished = false
+    let resolveStopped: (reason: "deadline" | "disconnect") => void = () => {}
+    const stopped = new Promise<"deadline" | "disconnect">((resolve) => { resolveStopped = resolve })
+    const timeout = setTimeout(() => {
+      if (finished) return
+      finished = true
+      if (!res.headersSent) res.status(504).json(publicError("Local run timed out"))
+      abort.abort(new Error("Local run timed out"))
+      resolveStopped("deadline")
+    }, options.localRunTimeoutMs ?? 120000)
+    const abortDisconnected = () => {
+      if (finished) return
+      finished = true
+      abort.abort(new DOMException("Client disconnected", "AbortError"))
+      resolveStopped("disconnect")
+    }
+    req.on("aborted", abortDisconnected)
+    res.on("close", () => {
+      if (!res.writableEnded) abortDisconnected()
+    })
     try {
-      const { model, prompt } = req.body as { model?: string; prompt?: string }
-      if (!model || !prompt) {
-        res.status(400).json({ error: "model and prompt are required" })
-        return
+      const provider = Promise.resolve().then(() => options.runMimoPrompt({ model, prompt, signal: abort.signal }))
+      // The response deadline must not inherit the process cleanup latency.
+      void provider.catch(() => {})
+      const outcome = await Promise.race([
+        provider.then(
+          (result) => ({ type: "result" as const, result }),
+          (error) => ({ type: "error" as const, error }),
+        ),
+        stopped.then((reason): { type: "deadline" | "disconnect" } => ({ type: reason })),
+      ])
+      if (outcome.type === "result" && !finished && !res.headersSent) {
+        finished = true
+        res.json(outcome.result)
+      } else if (outcome.type === "error" && !finished && !res.headersSent) {
+        finished = true
+        logRouteError("local run failed", outcome.error, req)
+        res.status(500).json(publicError("Local run failed"))
       }
-      if (prompt.length > MAX_LOCAL_PROMPT_LENGTH) {
-        res.status(413).json({ error: "prompt is too large" })
-        return
-      }
-      res.json(await options.runMimoPrompt({ model, prompt }))
-    } catch (error) {
-      logRouteError("local run failed", error, req)
-      res.status(500).json(publicError("Local run failed"))
+    } finally {
+      clearTimeout(timeout)
+      req.off("aborted", abortDisconnected)
     }
   })
   app.post("/local-run/stream", async (req, res) => {
@@ -297,29 +338,83 @@ export function createApp(options: AppOptions) {
       Connection: "keep-alive",
     })
 
-    const send = (event: unknown) => res.write(`data: ${JSON.stringify(event)}\n\n`)
+    const send = (event: unknown) => {
+      if (res.writableEnded || res.destroyed) return false
+      return res.write(`data: ${JSON.stringify(event)}\n\n`)
+    }
     const abort = new AbortController()
-    const timeout = setTimeout(() => abort.abort(), 120000)
-    req.on("aborted", () => abort.abort())
+    let timedOut = false
+    let timeoutFrameSent = false
+    let terminate: () => void = () => {}
+    const terminated = new Promise<void>((resolve) => {
+      terminate = resolve
+    })
+    let terminal = false
+    const finishTerminal = () => {
+      if (terminal) return false
+      terminal = true
+      clearTimeout(timeout)
+      terminate()
+      return true
+    }
+    const sendTimeout = () => {
+      if (!timeoutFrameSent && !res.writableEnded) {
+        timeoutFrameSent = true
+        send({ type: "error", error: "Local run timed out" })
+        res.end()
+      }
+    }
+    const timeout = setTimeout(() => {
+      if (!finishTerminal()) return
+      timedOut = true
+      abort.abort()
+      sendTimeout()
+    }, options.localRunTimeoutMs ?? 120000)
+    req.on("aborted", () => {
+      if (!finishTerminal()) return
+      abort.abort()
+    })
     res.on("close", () => {
-      if (!res.writableEnded) abort.abort()
+      if (!res.writableEnded) {
+        if (!finishTerminal()) return
+        abort.abort()
+      }
     })
 
     try {
       const config = options.resolveOpenAICompatibleModel(model)
-      await options.streamOpenAICompatible(
-        { model: config, prompt, signal: abort.signal },
-        {
-          onStart: () => send({ type: "start" }),
-          onDelta: (text) => send({ type: "delta", text }),
-          onError: (message) => send({ type: "error", error: message }),
-          onDone: () => send({ type: "done" }),
-        },
-      )
+      await Promise.race([
+        options.streamOpenAICompatible(
+          { model: config, prompt, signal: abort.signal },
+          {
+            onStart: () => {
+              if (!terminal) send({ type: "start" })
+            },
+            onDelta: (text) => {
+              if (!terminal) send({ type: "delta", text })
+            },
+            onError: (message) => {
+              if (!finishTerminal()) return
+              send({ type: "error", error: message })
+            },
+            onDone: () => {
+              if (!finishTerminal()) return
+              send({ type: "done" })
+            },
+          },
+        ),
+        terminated,
+      ])
+      if (timedOut) sendTimeout()
     } catch (error) {
-      if (!abort.signal.aborted) {
+      if (timedOut) {
+        sendTimeout()
+      } else if (!abort.signal.aborted && finishTerminal()) {
         logRouteError("local stream failed", error, req)
-        send({ type: "error", error: "Local stream failed" })
+        const code = typeof error === "object" && error !== null && "code" in error && error.code === "STREAM_UNSUPPORTED"
+          ? "STREAM_UNSUPPORTED"
+          : undefined
+        send({ type: "error", error: "Local stream failed", ...(code ? { code } : {}) })
       }
     } finally {
       clearTimeout(timeout)

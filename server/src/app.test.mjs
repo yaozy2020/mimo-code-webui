@@ -1,6 +1,16 @@
 import assert from "node:assert/strict"
+import fs from "node:fs"
 import http from "node:http"
 import { createApp } from "./app.ts"
+import { streamOpenAICompatible } from "./openaiStream.ts"
+import { runLocalPromptStream } from "../../web/src/api/client.ts"
+
+const controllerSource = fs.readFileSync(new URL("../../web/src/components/chat/usePromptController.ts", import.meta.url), "utf8")
+const fallbackMatch = controllerSource.match(/export function shouldFallbackLocalRun\([^]*?\n}/)
+assert.ok(fallbackMatch, "shouldFallbackLocalRun should be exported")
+const shouldFallbackLocalRun = Function(`${fallbackMatch[0]
+  .replace("export function", "function")
+  .replace(/: unknown/g, "")}; return shouldFallbackLocalRun`)()
 
 function listen(app) {
   return new Promise((resolve) => {
@@ -18,7 +28,7 @@ const { server, url } = await listen(
     host: "127.0.0.1",
     port: 0,
     workspaceRoot: "/tmp",
-    mimoInfo: { url: "http://127.0.0.1:4096", port: 4096, pid: 0 },
+    getMimoInfo: () => ({ url: "http://127.0.0.1:4096", port: 4096, pid: 0 }),
     isMimoManaged: () => false,
     getMimoSupervisorStatus: () => ({ restartCount: 2, consecutiveFailures: 0, lastRestartReason: "operator_request" }),
     checkHealth: async () => ({ healthy: true, version: "test" }),
@@ -146,7 +156,7 @@ try {
       host: "127.0.0.1",
       port: 0,
       workspaceRoot: "/tmp",
-      mimoInfo: { url: "http://127.0.0.1:4096", port: 4096, pid: 0 },
+      getMimoInfo: () => ({ url: "http://127.0.0.1:4096", port: 4096, pid: 0 }),
       isMimoManaged: () => false,
       checkHealth: async () => ({ healthy: true, version: "test" }),
       getMimoPathInfo: async () => null,
@@ -179,13 +189,53 @@ try {
     await new Promise((resolve) => invalidRestartServer.server.close(resolve))
   }
 
+  let currentMimoInfo = { url: "http://127.0.0.1:4096", port: 4096, pid: 1 }
+  const dynamicBaseCalls = []
+  const dynamicBaseServer = await listen(createApp({
+    authToken: "secret-token",
+    host: "127.0.0.1",
+    port: 0,
+    workspaceRoot: "/tmp",
+    getMimoInfo: () => currentMimoInfo,
+    isMimoManaged: () => true,
+    checkHealth: async (baseUrl) => { dynamicBaseCalls.push(["health", baseUrl]); return { healthy: true } },
+    getMimoPathInfo: async (baseUrl) => { dynamicBaseCalls.push(["path", baseUrl]); return { directory: "/tmp" } },
+    listManagedMimoServers: () => [],
+    readMimoConfig: () => ({}),
+    listManualModels: () => [],
+    listBuiltinModels: async () => [],
+    addMimoModelConfig: () => ({}),
+    probeNativeModel: async ({ baseUrl }) => { dynamicBaseCalls.push(["probe", baseUrl]); return { supported: true } },
+    restartMimo: async () => ({ ok: true }),
+    runMimoPrompt: async () => ({ text: "ok" }),
+    runReadonlyCliCommand: async () => ({}),
+    resolveOpenAICompatibleModel: () => ({ modelID: "model", baseUrl: "https://8.8.8.8/v1" }),
+    streamOpenAICompatible: async () => {},
+  }))
+  try {
+    currentMimoInfo = { url: "http://127.0.0.1:4199", port: 4199, pid: 2 }
+    const headers = { Authorization: "Bearer secret-token", "Content-Type": "application/json" }
+    await fetch(`${dynamicBaseServer.url}/status`)
+    const localStatus = await fetch(`${dynamicBaseServer.url}/local-status`, { headers })
+    assert.equal((await localStatus.json()).mimo.url, currentMimoInfo.url)
+    await fetch(`${dynamicBaseServer.url}/local-config/native-model-probe`, { method: "POST", headers, body: JSON.stringify({ model: "test/model" }) })
+    assert.deepEqual(dynamicBaseCalls, [
+      ["health", currentMimoInfo.url],
+      ["health", currentMimoInfo.url],
+      ["path", currentMimoInfo.url],
+      ["probe", currentMimoInfo.url],
+    ])
+  } finally {
+    await new Promise((resolve) => dynamicBaseServer.server.close(resolve))
+  }
+
   const rateLimitedServer = await listen(
     createApp({
       authToken: "secret-token",
       host: "127.0.0.1",
       port: 0,
       workspaceRoot: "/tmp",
-      mimoInfo: { url: "http://127.0.0.1:4096", port: 4096, pid: 0 },
+      getMimoInfo: () => ({ url: "http://127.0.0.1:4096", port: 4096, pid: 0 }),
       isMimoManaged: () => false,
       checkHealth: async () => ({ healthy: true, version: "test" }),
       getMimoPathInfo: async () => null,
@@ -210,6 +260,243 @@ try {
     assert.equal((await fetch(`${rateLimitedServer.url}/local-run`, { method: "POST", headers, body: JSON.stringify({ model: "safe/model", prompt: "three" }) })).status, 429)
   } finally {
     await new Promise((resolve) => rateLimitedServer.server.close(resolve))
+  }
+
+  const timeoutServer = await listen(
+    createApp({
+      authToken: "secret-token",
+      host: "127.0.0.1",
+      port: 0,
+      workspaceRoot: "/tmp",
+      getMimoInfo: () => ({ url: "http://127.0.0.1:4096", port: 4096, pid: 0 }),
+      isMimoManaged: () => false,
+      checkHealth: async () => ({ healthy: true }),
+      getMimoPathInfo: async () => null,
+      listManagedMimoServers: () => [],
+      readMimoConfig: () => ({}),
+      listManualModels: () => [],
+      listBuiltinModels: async () => [],
+      addMimoModelConfig: () => ({}),
+      probeNativeModel: async () => ({ supported: true }),
+      restartMimo: async () => ({ ok: true }),
+      runMimoPrompt: async () => ({ text: "ok" }),
+      runReadonlyCliCommand: async () => ({}),
+      resolveOpenAICompatibleModel: () => ({ providerID: "safe", modelID: "model", baseUrl: "https://api.example.com/v1" }),
+      streamOpenAICompatible: async () => new Promise(() => {}),
+      localRunTimeoutMs: 10,
+    }),
+  )
+  try {
+    const response = await fetch(`${timeoutServer.url}/local-run/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer secret-token" },
+      body: JSON.stringify({ model: "safe/model", prompt: "wait" }),
+    })
+    const body = await response.text()
+    const frames = body.split("\n\n").filter(Boolean).map((frame) => JSON.parse(frame.replace(/^data: /, "")))
+    assert.deepEqual(frames, [{ type: "error", error: "Local run timed out" }])
+  } finally {
+    await new Promise((resolve) => timeoutServer.server.close(resolve))
+  }
+
+  for (const { terminal, expectedFrames } of [
+    {
+      terminal: (handlers) => handlers.onDone?.(),
+      expectedFrames: [{ type: "done" }],
+    },
+    {
+      terminal: (handlers) => handlers.onError?.("provider failed"),
+      expectedFrames: [{ type: "error", error: "provider failed" }],
+    },
+  ]) {
+    const terminalServer = await listen(
+      createApp({
+        authToken: "secret-token",
+        host: "127.0.0.1",
+        port: 0,
+        workspaceRoot: "/tmp",
+        getMimoInfo: () => ({ url: "http://127.0.0.1:4096", port: 4096, pid: 0 }),
+        isMimoManaged: () => false,
+        checkHealth: async () => ({ healthy: true }),
+        getMimoPathInfo: async () => null,
+        listManagedMimoServers: () => [],
+        readMimoConfig: () => ({}),
+        listManualModels: () => [],
+        listBuiltinModels: async () => [],
+        addMimoModelConfig: () => ({}),
+        probeNativeModel: async () => ({ supported: true }),
+        restartMimo: async () => ({ ok: true }),
+        runMimoPrompt: async () => ({ text: "ok" }),
+        runReadonlyCliCommand: async () => ({}),
+        resolveOpenAICompatibleModel: () => ({ modelID: "model", baseUrl: "https://8.8.8.8/v1" }),
+        streamOpenAICompatible: async (_input, handlers) => {
+          terminal(handlers)
+          await new Promise(() => {})
+        },
+        localRunTimeoutMs: 100,
+      }),
+    )
+    try {
+      const startedAt = Date.now()
+      const response = await fetch(`${terminalServer.url}/local-run/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer secret-token" },
+        body: JSON.stringify({ model: "safe/model", prompt: "terminal" }),
+      })
+      const frames = (await response.text()).split("\n\n").filter(Boolean)
+        .map((frame) => JSON.parse(frame.replace(/^data: /, "")))
+      assert.ok(Date.now() - startedAt < 80, "protocol termination should complete before the app timeout")
+      assert.deepEqual(frames, expectedFrames)
+      await new Promise((resolve) => setTimeout(resolve, 120))
+      assert.deepEqual(frames, expectedFrames, "the cleared timeout must not append another terminal error")
+    } finally {
+      await new Promise((resolve) => terminalServer.server.close(resolve))
+    }
+  }
+
+  for (const { callbacks, expectedFrames } of [
+    {
+      callbacks: (handlers) => {
+        handlers.onDone?.()
+        handlers.onDelta?.("late delta")
+        handlers.onDone?.()
+        handlers.onError?.("late error")
+      },
+      expectedFrames: [{ type: "done" }],
+    },
+    {
+      callbacks: (handlers) => {
+        handlers.onError?.("provider failed")
+        handlers.onDelta?.("late delta")
+        handlers.onDone?.()
+      },
+      expectedFrames: [{ type: "error", error: "provider failed" }],
+    },
+  ]) {
+    const callbackOrderServer = await listen(
+      createApp({
+        authToken: "secret-token",
+        host: "127.0.0.1",
+        port: 0,
+        workspaceRoot: "/tmp",
+        getMimoInfo: () => ({ url: "http://127.0.0.1:4096", port: 4096, pid: 0 }),
+        isMimoManaged: () => false,
+        checkHealth: async () => ({ healthy: true }),
+        getMimoPathInfo: async () => null,
+        listManagedMimoServers: () => [],
+        readMimoConfig: () => ({}),
+        listManualModels: () => [],
+        listBuiltinModels: async () => [],
+        addMimoModelConfig: () => ({}),
+        probeNativeModel: async () => ({ supported: true }),
+        restartMimo: async () => ({ ok: true }),
+        runMimoPrompt: async () => ({ text: "ok" }),
+        runReadonlyCliCommand: async () => ({}),
+        resolveOpenAICompatibleModel: () => ({ modelID: "model", baseUrl: "https://8.8.8.8/v1" }),
+        streamOpenAICompatible: async (_input, handlers) => callbacks(handlers),
+      }),
+    )
+    try {
+      const response = await fetch(`${callbackOrderServer.url}/local-run/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer secret-token" },
+        body: JSON.stringify({ model: "safe/model", prompt: "terminal order" }),
+      })
+      const frames = (await response.text()).split("\n\n").filter(Boolean)
+        .map((frame) => JSON.parse(frame.replace(/^data: /, "")))
+      assert.deepEqual(frames, expectedFrames, "callbacks after a terminal frame must be ignored")
+    } finally {
+      await new Promise((resolve) => callbackOrderServer.server.close(resolve))
+    }
+  }
+
+  const streamErrorServer = await listen(
+    createApp({
+      authToken: "secret-token",
+      host: "127.0.0.1",
+      port: 0,
+      workspaceRoot: "/tmp",
+      getMimoInfo: () => ({ url: "http://127.0.0.1:4096", port: 4096, pid: 0 }),
+      isMimoManaged: () => false,
+      checkHealth: async () => ({ healthy: true }),
+      getMimoPathInfo: async () => null,
+      listManagedMimoServers: () => [],
+      readMimoConfig: () => ({}),
+      listManualModels: () => [],
+      listBuiltinModels: async () => [],
+      addMimoModelConfig: () => ({}),
+      probeNativeModel: async () => ({ supported: true }),
+      restartMimo: async () => ({ ok: true }),
+      runMimoPrompt: async () => ({ text: "ok" }),
+      runReadonlyCliCommand: async () => ({}),
+      resolveOpenAICompatibleModel: () => ({ modelID: "model", baseUrl: "https://8.8.8.8/v1" }),
+      streamOpenAICompatible,
+      rateLimit: { windowMs: 60_000, max: 100 },
+    }),
+  )
+  const nativeFetch = globalThis.fetch
+  try {
+    globalThis.fetch = (input, init) => {
+      const requestUrl = new URL(String(input), streamErrorServer.url)
+      if (requestUrl.hostname === "8.8.8.8") {
+        const prompt = JSON.parse(String(init?.body)).messages[0].content
+        const error = prompt === "unsupported"
+          ? { message: "Streaming is unavailable", code: "STREAM_UNSUPPORTED" }
+          : { message: "provider failed" }
+        return Promise.resolve(new Response(`data: ${JSON.stringify({ error })}\n\n`, {
+          headers: { "Content-Type": "text/event-stream" },
+        }))
+      }
+      return nativeFetch(requestUrl, init)
+    }
+    const headers = { "Content-Type": "application/json", Authorization: "Bearer secret-token" }
+    const unsupportedResponse = await fetch(`${streamErrorServer.url}/local-run/stream`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ model: "safe/model", prompt: "unsupported" }),
+    })
+    const unsupportedFrames = (await unsupportedResponse.text()).split("\n\n").filter(Boolean)
+      .map((frame) => JSON.parse(frame.replace(/^data: /, "")))
+    assert.deepEqual(unsupportedFrames, [
+      { type: "start" },
+      { type: "error", error: "Local stream failed", code: "STREAM_UNSUPPORTED" },
+    ], "unsupported streams should expose one coded terminal error")
+
+    const providerResponse = await fetch(`${streamErrorServer.url}/local-run/stream`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ model: "safe/model", prompt: "provider-error" }),
+    })
+    const providerFrames = (await providerResponse.text()).split("\n\n").filter(Boolean)
+      .map((frame) => JSON.parse(frame.replace(/^data: /, "")))
+    assert.deepEqual(providerFrames, [
+      { type: "start" },
+      { type: "error", error: "provider failed" },
+    ], "ordinary provider failures should expose one uncoded terminal error")
+
+    try {
+      const routeFetch = globalThis.fetch
+      const nativeLocalStorage = globalThis.localStorage
+      globalThis.localStorage = { getItem: () => null }
+      globalThis.fetch = (input, init) => routeFetch(input, {
+        ...init,
+        headers: { ...Object.fromEntries(new Headers(init?.headers)), Authorization: "Bearer secret-token" },
+      })
+      try {
+        const clientError = await runLocalPromptStream(
+          { model: "safe/model", prompt: "unsupported" },
+          { onDelta: () => {} },
+        ).then(() => null, (error) => error)
+        assert.equal(shouldFallbackLocalRun(clientError), true, "the frontend should receive the typed fallback code")
+      } finally {
+        globalThis.localStorage = nativeLocalStorage
+      }
+    } finally {
+      globalThis.fetch = nativeFetch
+    }
+  } finally {
+    globalThis.fetch = nativeFetch
+    await new Promise((resolve) => streamErrorServer.server.close(resolve))
   }
 
   const largeBody = await fetch(`${url}/local-run`, {

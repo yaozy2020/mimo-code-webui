@@ -185,7 +185,7 @@ async function main() {
     host: HOST,
     port,
     workspaceRoot: MIMO_WORKSPACE_ROOT,
-    mimoInfo: supervisor.status().base,
+    getMimoInfo: () => supervisor.status().base,
     isMimoManaged: () => supervisor.status().managed,
     getMimoSupervisorStatus: () => {
       const { base: _base, projectServers: _projectServers, ...status } = supervisor.status()

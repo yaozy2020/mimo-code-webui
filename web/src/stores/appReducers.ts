@@ -63,3 +63,17 @@ export function setMessageContent(messages: MessagesBySession, sessionID: string
     : [...msgs, fallbackMessage]
   return { ...messages, [sessionID]: nextMessages }
 }
+
+export function removeOptimisticMessage(messages: MessagesBySession, sessionID: string, messageID: string): MessagesBySession {
+  const sessionMessages = messages[sessionID] || []
+  const nextMessages = sessionMessages.filter((message) => message.id !== messageID || !message.optimistic)
+  return nextMessages.length === sessionMessages.length ? messages : { ...messages, [sessionID]: nextMessages }
+}
+
+export function removeEmptyAssistantMessage(messages: MessagesBySession, sessionID: string, messageID: string): MessagesBySession {
+  const sessionMessages = messages[sessionID] || []
+  const nextMessages = sessionMessages.filter(
+    (message) => message.id !== messageID || message.role !== "assistant" || Boolean(message.content),
+  )
+  return nextMessages.length === sessionMessages.length ? messages : { ...messages, [sessionID]: nextMessages }
+}

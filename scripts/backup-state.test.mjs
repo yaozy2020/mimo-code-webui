@@ -21,9 +21,21 @@ fs.symlinkSync("../tool.js", path.join(config, "node_modules", ".bin", "tool"))
 fs.writeFileSync(path.join(state, "memory.md"), "durable memory\n")
 fs.writeFileSync(path.join(data, "history.json"), "[]\n")
 fs.writeFileSync(path.join(runtimeState, "runtime.json"), "{}\n")
-const env = { ...process.env, MIMO_BACKUP_ROOT: backups, MIMO_BACKUP_STATUS_FILE: status, MIMO_WEBUI_CONFIG_DIR: config, MIMO_CONFIG_DIR: path.join(root, "missing-config"), MIMO_DATA_DIR: data, MIMO_RUNTIME_STATE_DIR: runtimeState, MIMO_STATE_DIR: state }
+const env = { ...process.env, MIMO_REUSE_EXISTING: "false", MIMO_BACKUP_ROOT: backups, MIMO_BACKUP_STATUS_FILE: status, MIMO_WEBUI_CONFIG_DIR: config, MIMO_CONFIG_DIR: path.join(root, "missing-config"), MIMO_DATA_DIR: data, MIMO_RUNTIME_STATE_DIR: runtimeState, MIMO_STATE_DIR: state }
 
 try {
+  const reuseRoot = path.join(root, "reuse-backups")
+  const reuseStatus = path.join(root, "reuse-status.json")
+  const reuse = spawnSync(process.execPath, ["scripts/backup-state.mjs"], {
+    cwd: process.cwd(),
+    env: { ...env, MIMO_REUSE_EXISTING: "true", MIMO_BACKUP_ROOT: reuseRoot, MIMO_BACKUP_STATUS_FILE: reuseStatus },
+    encoding: "utf8",
+  })
+  assert.notEqual(reuse.status, 0)
+  assert.match(reuse.stderr, /backup requires WebUI-owned MiMo processes; MIMO_REUSE_EXISTING=true/)
+  assert.equal(fs.existsSync(reuseRoot), false)
+  assert.equal(fs.existsSync(reuseStatus), false)
+
   const sqlite = await import("node:sqlite").catch(() => null)
   if (sqlite) {
     const database = new sqlite.DatabaseSync(path.join(state, "mimocode.db"))

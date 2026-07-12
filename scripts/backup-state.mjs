@@ -17,6 +17,10 @@ const keepBackups = Number(process.env.MIMO_BACKUP_KEEP || 7)
 if (!Number.isSafeInteger(keepBackups) || keepBackups < 1) throw new Error("MIMO_BACKUP_KEEP must be a positive integer")
 let staging = ""
 
+if (process.argv[2] !== "verify" && process.argv[2] !== "restore" && process.env.MIMO_REUSE_EXISTING === "true") {
+  throw new Error("backup requires WebUI-owned MiMo processes; MIMO_REUSE_EXISTING=true")
+}
+
 function digestFile(file) {
   const hash = crypto.createHash("sha256")
   const buffer = Buffer.allocUnsafe(1024 * 1024)

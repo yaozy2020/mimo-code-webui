@@ -31,6 +31,16 @@ function extractErrorMessage(value: unknown) {
   return error?.message
 }
 
+export function createOpenAIStreamError(value: unknown, fallback: string) {
+  const message = extractErrorMessage(value) || fallback
+  const error = new Error(message) as Error & { code?: string }
+  if (typeof value === "object" && value !== null && "error" in value) {
+    const detail = (value as { error?: { code?: string } }).error
+    if (detail?.code === "STREAM_UNSUPPORTED") error.code = detail.code
+  }
+  return error
+}
+
 export async function streamOpenAICompatible(input: OpenAIStreamInput, handlers: OpenAIStreamHandlers) {
   const headers: Record<string, string> = { "Content-Type": "application/json" }
   if (input.model.apiKey) headers.Authorization = `Bearer ${input.model.apiKey}`
@@ -50,7 +60,13 @@ export async function streamOpenAICompatible(input: OpenAIStreamInput, handlers:
 
   if (!response.ok) {
     const text = await response.text().catch(() => "")
-    throw new Error(text || `OpenAI-compatible stream failed: HTTP ${response.status}`)
+    let body: unknown
+    try {
+      body = JSON.parse(text)
+    } catch {
+      body = undefined
+    }
+    throw createOpenAIStreamError(body, text || `OpenAI-compatible stream failed: HTTP ${response.status}`)
   }
 
   const reader = response.body?.getReader()
@@ -59,20 +75,19 @@ export async function streamOpenAICompatible(input: OpenAIStreamInput, handlers:
   handlers.onStart?.()
   const decoder = new TextDecoder()
   let buffer = ""
+  let reachedEof = false
+  let protocolDone = false
 
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split("\n")
-    buffer = lines.pop() ?? ""
-
+  const processLines = (lines: string[]) => {
     for (const rawLine of lines) {
       const line = rawLine.trim()
       if (!line.startsWith("data:")) continue
       const data = line.slice(5).trim()
-      if (!data || data === "[DONE]") continue
+      if (!data) continue
+      if (data === "[DONE]") {
+        protocolDone = true
+        return
+      }
 
       const chunk = JSON.parse(data) as {
         choices?: Array<{ delta?: { content?: string }; message?: { content?: string } }>
@@ -80,8 +95,9 @@ export async function streamOpenAICompatible(input: OpenAIStreamInput, handlers:
       }
       const error = extractErrorMessage(chunk)
       if (error) {
-        handlers.onError?.(error)
-        throw new Error(error)
+        const streamError = createOpenAIStreamError(chunk, error)
+        if (streamError.code !== "STREAM_UNSUPPORTED") handlers.onError?.(error)
+        throw streamError
       }
 
       const text = chunk.choices?.[0]?.delta?.content ?? chunk.choices?.[0]?.message?.content
@@ -89,5 +105,38 @@ export async function streamOpenAICompatible(input: OpenAIStreamInput, handlers:
     }
   }
 
-  handlers.onDone?.()
+  try {
+    while (!protocolDone) {
+      const { done, value } = await reader.read()
+      if (done) {
+        reachedEof = true
+        buffer += decoder.decode()
+        if (buffer) processLines([buffer])
+        break
+      }
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split("\n")
+      buffer = lines.pop() ?? ""
+      processLines(lines)
+    }
+
+    if (!protocolDone) {
+      const error = new Error("OpenAI-compatible stream incomplete: connection ended before [DONE]") as Error & { code: string }
+      error.code = "STREAM_INCOMPLETE"
+      throw error
+    }
+    handlers.onDone?.()
+  } finally {
+    try {
+      if (!reachedEof) void reader.cancel().catch(() => undefined)
+    } catch {
+      // Cleanup is best-effort and must not delay or replace protocol termination.
+    }
+    try {
+      reader.releaseLock()
+    } catch {
+      // Cleanup must not replace the stream result or its primary error.
+    }
+  }
 }

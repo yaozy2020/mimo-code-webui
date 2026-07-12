@@ -63,6 +63,8 @@ sudo ./deploy/mimo-code-webui install \
 
 See `docs/deployment.md` for LAN mode, upgrades, rollback, status, uninstall, and optional reverse proxies.
 
+Production reverse proxies must publish the WebUI at the origin root path `/`; subpath deployment is not supported. Formal artifacts are built with `RELEASE_SIGNING_KEY=/secure/release.key npm run package:release` from clean tagged `main`. `npm run package:unsigned` is development-only and produces a visibly unsigned artifact that the installer rejects.
+
 ## Portable Release Start
 
 For a temporary foreground process rather than a managed Linux service, extract the release and run `./scripts/start.sh` on Linux or `scripts\start.bat` on Windows.

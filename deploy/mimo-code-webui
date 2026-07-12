@@ -17,8 +17,14 @@ BACKUP_SERVICE_TARGET="/etc/systemd/system/mimo-code-webui-backup.service"
 BACKUP_TIMER_TARGET="/etc/systemd/system/mimo-code-webui-backup.timer"
 ALERT_UNIT_TARGET="/etc/systemd/system/mimo-code-webui-alert@.service"
 LOCK_FILE="/run/lock/$SERVICE_NAME-deploy.lock"
+BACKUP_RESTART_MARKER="/run/mimo-code-webui/backup-restart-required"
+UPGRADE_RECOVERY_MARKER="$STATE_ROOT/upgrade-recovery-required"
+DEPLOYMENT_RECOVERY_MARKER="$STATE_ROOT/deployment-recovery-required"
+DEPLOYMENT_TRANSACTION_ROOT="$STATE_ROOT/deployment-transactions"
 TEST_ROOT="${MIMO_DEPLOY_TEST_ROOT:-}"
 HEALTH_TIMEOUT=60
+MIMO_PROBE_TIMEOUT="${MIMO_PROBE_TIMEOUT:-5}"
+MIMO_MIN_VERSION="0.1.5"
 KEEP_RELEASES=3
 MODE=""
 PORT=""
@@ -44,11 +50,19 @@ NEW_RELEASE=""
 DEPLOY_COMMITTED=false
 INSTALL_TRANSACTION_STARTED=false
 UPGRADE_TRANSACTION_STARTED=false
+TRANSACTION_ACTIVE=false
+SERVICE_WAS_ACTIVE=false
+SERVICE_WAS_ENABLED=false
+MIMO_CLI_VERSION=""
 RELEASE_TEMP=""
 OLD_CURRENT=""
 OLD_PREVIOUS=""
 UNIT_BACKUP=""
+TRANSACTION_SNAPSHOT=""
 BREAK_GLASS_SKIP_BACKUP=false
+MIMO_TARGET_HOST="${MIMO_HOST:-127.0.0.1}"
+MIMO_TARGET_PORT="${MIMO_PORT:-4096}"
+MIMO_REUSE_TARGET="${MIMO_REUSE_EXISTING:-false}"
 
 if [ -n "$TEST_ROOT" ]; then
   [ "${MIMO_DEPLOY_TEST_MODE:-}" = "1" ] || die "MIMO_DEPLOY_TEST_ROOT requires MIMO_DEPLOY_TEST_MODE=1"
@@ -66,6 +80,10 @@ if [ -n "$TEST_ROOT" ]; then
   BACKUP_TIMER_TARGET="$TEST_ROOT/etc/systemd/system/mimo-code-webui-backup.timer"
   ALERT_UNIT_TARGET="$TEST_ROOT/etc/systemd/system/mimo-code-webui-alert@.service"
   LOCK_FILE="$TEST_ROOT/run/lock/$SERVICE_NAME-deploy.lock"
+  BACKUP_RESTART_MARKER="$TEST_ROOT/run/mimo-code-webui/backup-restart-required"
+  UPGRADE_RECOVERY_MARKER="$STATE_ROOT/upgrade-recovery-required"
+  DEPLOYMENT_RECOVERY_MARKER="$STATE_ROOT/deployment-recovery-required"
+  DEPLOYMENT_TRANSACTION_ROOT="$STATE_ROOT/deployment-transactions"
   MIMO_BACKUP_ROOT="${MIMO_BACKUP_ROOT:-$TEST_ROOT/var/backups/mimo-code-webui}"
 fi
 
@@ -116,13 +134,41 @@ systemctl_cmd() {
   if [ -n "$TEST_ROOT" ]; then
     printf '%s\n' "$*" >> "$TEST_ROOT/systemctl.log"
     case "$1" in
-      is-active) printf '%s\n' "${MIMO_DEPLOY_TEST_ACTIVE:-active}" ;;
-      is-enabled) printf '%s\n' "${MIMO_DEPLOY_TEST_ENABLED:-enabled}" ;;
+      is-active)
+        printf '%s\n' "${MIMO_DEPLOY_TEST_ACTIVE:-active}"
+        [ "${MIMO_DEPLOY_TEST_ACTIVE:-active}" = "active" ]
+        ;;
+      is-enabled)
+        printf '%s\n' "${MIMO_DEPLOY_TEST_ENABLED:-enabled}"
+        [ "${MIMO_DEPLOY_TEST_ENABLED:-enabled}" = "enabled" ]
+        ;;
+      start)
+        if [ -n "${MIMO_DEPLOY_TEST_START_SEQUENCE:-}" ]; then
+          local result="${MIMO_DEPLOY_TEST_START_SEQUENCE%%,*}"
+          if [ "$MIMO_DEPLOY_TEST_START_SEQUENCE" = "$result" ]; then
+            MIMO_DEPLOY_TEST_START_SEQUENCE=""
+          else
+            MIMO_DEPLOY_TEST_START_SEQUENCE="${MIMO_DEPLOY_TEST_START_SEQUENCE#*,}"
+          fi
+          export MIMO_DEPLOY_TEST_START_SEQUENCE
+          [ "$result" = "success" ]
+        fi
+        ;;
+      stop) [ "${MIMO_DEPLOY_TEST_STOP_FAIL:-false}" != "true" ] ;;
       restart) [ "${MIMO_DEPLOY_TEST_RESTART_FAIL:-false}" != "true" ] ;;
+      disable) [ "${MIMO_DEPLOY_TEST_DISABLE_FAIL:-false}" != "true" ] ;;
+      daemon-reload) [ "${MIMO_DEPLOY_TEST_DAEMON_RELOAD_FAIL:-false}" != "true" ] ;;
     esac
     return
   fi
   systemctl "$@"
+}
+
+inject_failure() {
+  if [ -n "$TEST_ROOT" ] && [ "${MIMO_DEPLOY_TEST_FAIL_AT:-}" = "$1" ]; then
+    echo "Error: injected deployment failure: $1" >&2
+    return 1
+  fi
 }
 
 run_as_service() {
@@ -137,12 +183,65 @@ require_command() { command -v "$1" >/dev/null || die "$1 is required"; }
 
 check_runtime() {
   local node_major
-  for command in node npm mimo tar sha256sum curl openssl; do require_command "$command"; done
+  for command in node npm tar sha256sum curl openssl; do require_command "$command"; done
+  if [ -n "$TEST_ROOT" ] && [ "${MIMO_DEPLOY_TEST_MIMO_VERSION:-0.1.5}" = "missing" ]; then
+    die "MiMo-Code CLI is required"
+  fi
+  require_command mimo
   node_major="$(node -p 'Number(process.versions.node.split(".")[0])')"
   [ "$node_major" -ge 18 ] || die "Node.js 18+ is required; found $(node --version)"
   log "node=$(command -v node) ($(node --version))"
   log "npm=$(command -v npm) ($(npm --version))"
-  log "mimo=$(command -v mimo) ($(mimo --version))"
+  check_mimo_version
+}
+
+check_mimo_version() {
+  local output version
+  if [ -n "$TEST_ROOT" ]; then
+    output="${MIMO_DEPLOY_TEST_MIMO_VERSION:-0.1.5}"
+  else
+    output="$(mimo --version 2>&1)" || die "cannot run MiMo-Code CLI: $output"
+  fi
+  version="$(node -e 'const s=process.argv[1].trim(); const bare=s.match(/^([0-9]+\.[0-9]+\.[0-9]+)$/); const named=s.match(/^(?:MiMo-Code|mimo)(?: version)? v?([0-9]+\.[0-9]+\.[0-9]+)$/); const m=bare||named; if (!m) process.exit(1); process.stdout.write(m[1])' "$output" 2>/dev/null)" \
+    || die "cannot parse MiMo-Code version: $output"
+  node -e 'const a=process.argv[1].split(".").map(Number), b=process.argv[2].split(".").map(Number); for(let i=0;i<3;i++){if(a[i]>b[i])process.exit(0);if(a[i]<b[i])process.exit(1)}' "$version" "$MIMO_MIN_VERSION" \
+    || die "MiMo-Code $MIMO_MIN_VERSION+ is required; found $version"
+  MIMO_CLI_VERSION="$version"
+  log "mimo=$(command -v mimo) ($output); version compatible"
+}
+
+read_mimo_target() {
+  [ -f "$CONFIG_FILE" ] || return 0
+  MIMO_TARGET_HOST="$(awk -F= '$1=="MIMO_HOST" {value=substr($0, index($0, "=") + 1)} END {print value}' "$CONFIG_FILE")"
+  MIMO_TARGET_PORT="$(awk -F= '$1=="MIMO_PORT" {value=substr($0, index($0, "=") + 1)} END {print value}' "$CONFIG_FILE")"
+  MIMO_REUSE_TARGET="$(awk -F= '$1=="MIMO_REUSE_EXISTING" {value=substr($0, index($0, "=") + 1)} END {print value}' "$CONFIG_FILE")"
+  MIMO_TARGET_HOST="${MIMO_TARGET_HOST:-127.0.0.1}"
+  MIMO_TARGET_PORT="${MIMO_TARGET_PORT:-4096}"
+  MIMO_REUSE_TARGET="${MIMO_REUSE_TARGET:-false}"
+}
+
+check_mimo_protocol() {
+  local base health path_result path_response path_status config
+  if [ -n "$TEST_ROOT" ] && [ "${MIMO_DEPLOY_TEST_REAL_PROBE:-}" != "1" ]; then
+    [ "${MIMO_DEPLOY_TEST_MIMO_PROBE:-ok}" = "ok" ] || die "MiMo read-only compatibility probe failed"
+    return
+  fi
+  base="http://$MIMO_TARGET_HOST:$MIMO_TARGET_PORT"
+  health="$(curl --request GET --fail --silent --show-error --max-time "$MIMO_PROBE_TIMEOUT" "$base/global/health")" \
+    || die "MiMo read-only compatibility probe failed: /global/health"
+  node -e 'try { const value=JSON.parse(process.argv[1]); const version=value && value.version; process.exit(value && value.healthy === true && version === process.argv[2] ? 0 : 1) } catch { process.exit(1) }' "$health" "$MIMO_CLI_VERSION" \
+    || die "MiMo read-only compatibility probe failed: invalid /global/health JSON"
+  path_result="$(curl --request GET --silent --show-error --max-time "$MIMO_PROBE_TIMEOUT" --write-out $'\n%{http_code}' "$base/global/path")" \
+    || die "MiMo read-only compatibility probe failed: /global/path"
+  path_status="${path_result##*$'\n'}"
+  path_response="${path_result%$'\n'*}"
+  node -e 'try { const value=JSON.parse(process.argv[2]); const validPath=process.argv[1] === "200" && value && typeof value.directory === "string" && value.directory.length > 0; const unavailable=process.argv[1] === "503" && value && value.error === "Web UI is temporarily unavailable."; process.exit(validPath || unavailable ? 0 : 1) } catch { process.exit(1) }' "$path_status" "$path_response" \
+    || die "MiMo read-only compatibility probe failed: invalid /global/path JSON"
+  config="$(curl --request GET --fail --silent --show-error --max-time "$MIMO_PROBE_TIMEOUT" "$base/config")" \
+    || die "MiMo read-only compatibility probe failed: /config"
+  node -e 'try { const value=JSON.parse(process.argv[1]); process.exit(value && typeof value === "object" && !Array.isArray(value) ? 0 : 1) } catch { process.exit(1) }' "$config" \
+    || die "MiMo read-only compatibility probe failed: invalid /config JSON"
+  log "MiMo read-only compatibility probe passed: $base"
 }
 
 parse_options() {
@@ -172,6 +271,11 @@ parse_options() {
   done
 }
 
+validate_global_options() {
+  [[ "$KEEP_RELEASES" =~ ^[0-9]+$ ]] && [ "$KEEP_RELEASES" -ge 2 ] \
+    || die "keep-releases must be an integer at least 2"
+}
+
 prompt_config() {
   if [ "$NON_INTERACTIVE" = true ]; then
     [ -n "$MODE" ] || die "--mode is required with --non-interactive"
@@ -189,8 +293,6 @@ prompt_config() {
   esac
   [[ "$PORT" =~ ^[0-9]+$ ]] && [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] || die "invalid port: $PORT"
   [[ "$HEALTH_TIMEOUT" =~ ^[0-9]+$ ]] && [ "$HEALTH_TIMEOUT" -gt 0 ] || die "invalid health timeout"
-  [[ "$KEEP_RELEASES" =~ ^[0-9]+$ ]] && [ "$KEEP_RELEASES" -ge 2 ] || die "keep-releases must be at least 2"
-
   MIMO_SERVE_CWD="${MIMO_SERVE_CWD:-$WORKSPACE_ROOT}"
   MIMO_CONFIG="${MIMO_CONFIG:-$STATE_ROOT/home/.config/mimocode/config.json}"
   if [ -z "$AUTH_TOKEN" ]; then
@@ -256,10 +358,16 @@ NODE
 
 cleanup_failed_install() {
   local exit_code=$?
+  local compensation_failed=false
+  set +e
   [ "$exit_code" -ne 0 ] || return 0
   [ "$DEPLOY_COMMITTED" = false ] || return 0
   [ -z "$RELEASE_TEMP" ] || rm -rf "$RELEASE_TEMP"
+  if [ "$ACTION" != "upgrade" ] || [ "$TRANSACTION_ACTIVE" != true ]; then
+    cleanup_transaction_snapshot
+  fi
   if [ "$ACTION" = "install" ] && [ "$INSTALL_TRANSACTION_STARTED" = true ]; then
+    if [ -n "$TEST_ROOT" ] && [ "${MIMO_DEPLOY_TEST_KEEP_FAILED_ARTIFACTS:-false}" = true ]; then return "$exit_code"; fi
     systemctl_cmd disable --now "$SERVICE_NAME" >/dev/null 2>&1 || true
     systemctl_cmd disable --now mimo-code-webui-backup.timer >/dev/null 2>&1 || true
     if [ "$INSTALLED_UNIT" = true ]; then
@@ -273,17 +381,126 @@ cleanup_failed_install() {
     if [ "$CREATED_WORKSPACE" = true ]; then rmdir "$WORKSPACE_ROOT" >/dev/null 2>&1 || true; fi
     if [ "$CREATED_USER" = true ]; then userdel "$SERVICE_USER" >/dev/null 2>&1 || true; fi
     rmdir "$INSTALL_ROOT/releases" "$INSTALL_ROOT" >/dev/null 2>&1 || true
-  elif [ "$ACTION" = "upgrade" ] && [ "$UPGRADE_TRANSACTION_STARTED" = true ]; then
-    [ -z "$OLD_CURRENT" ] || ln -sfn "$OLD_CURRENT" "$INSTALL_ROOT/current"
-    if [ -n "$OLD_PREVIOUS" ]; then ln -sfn "$OLD_PREVIOUS" "$INSTALL_ROOT/previous"; else rm -f "$INSTALL_ROOT/previous"; fi
-    if [ -n "$UNIT_BACKUP" ] && [ -f "$UNIT_BACKUP" ]; then
-      install -D -m 0644 "$UNIT_BACKUP" "$UNIT_TARGET"
+  elif [ "$ACTION" = "upgrade" ] && [ "$TRANSACTION_ACTIVE" = true ]; then
+    restore_transaction_state || compensation_failed=true
+    [ -z "$NEW_RELEASE" ] || rm -rf "$NEW_RELEASE" || compensation_failed=true
+    rm -f "$INSTALL_ROOT/current.new" "$INSTALL_ROOT/previous.new" || compensation_failed=true
+    if [ "$compensation_failed" = true ]; then
+      echo "Error: upgrade compensation failed; manual recovery required" >&2
     fi
-    systemctl_cmd daemon-reload >/dev/null 2>&1 || true
-    systemctl_cmd restart "$SERVICE_NAME" >/dev/null 2>&1 || true
-    [ -z "$NEW_RELEASE" ] || rm -rf "$NEW_RELEASE"
   fi
   return "$exit_code"
+}
+
+cleanup_transaction_snapshot() {
+  if [ -n "$TEST_ROOT" ] && [ "${MIMO_DEPLOY_TEST_KEEP_SNAPSHOT:-false}" = true ]; then return; fi
+  [ -z "$TRANSACTION_SNAPSHOT" ] || rm -rf "$TRANSACTION_SNAPSHOT" || return 1
+  TRANSACTION_SNAPSHOT=""
+}
+
+write_deployment_recovery_marker() {
+  local stage="$1" marker_tmp="$DEPLOYMENT_RECOVERY_MARKER.tmp.$$"
+  if [ -n "$TEST_ROOT" ] && [ -n "${MIMO_DEPLOY_TEST_MARKER_FAILURE:-}" ]; then
+    echo "Error: deployment recovery marker write failed (${MIMO_DEPLOY_TEST_MARKER_FAILURE})" >&2
+    return 1
+  fi
+  mkdir -p "$(dirname "$DEPLOYMENT_RECOVERY_MARKER")" || return 1
+  install -m 0600 /dev/null "$marker_tmp" || return 1
+  printf 'snapshot=%s\nold_current=%s\nold_previous=%s\nservice_active=%s\nservice_enabled=%s\nfailed_stage=%s\n' \
+    "$TRANSACTION_SNAPSHOT" "$OLD_CURRENT" "$OLD_PREVIOUS" "$SERVICE_WAS_ACTIVE" "$SERVICE_WAS_ENABLED" "$stage" > "$marker_tmp" \
+    && mv -f "$marker_tmp" "$DEPLOYMENT_RECOVERY_MARKER" || { rm -f "$marker_tmp"; return 1; }
+}
+
+restore_transaction_state() {
+  local target snapshot_name snapshot_state compensation_failed=false
+  if [ -n "$OLD_CURRENT" ]; then
+    ln -sfn "$OLD_CURRENT" "$INSTALL_ROOT/current" || compensation_failed=true
+  else
+    rm -f "$INSTALL_ROOT/current" || compensation_failed=true
+  fi
+  if [ -n "$OLD_PREVIOUS" ]; then
+    ln -sfn "$OLD_PREVIOUS" "$INSTALL_ROOT/previous" || compensation_failed=true
+  else
+    rm -f "$INSTALL_ROOT/previous" || compensation_failed=true
+  fi
+  while read -r snapshot_name snapshot_state; do
+    case "$snapshot_name" in
+      env) target="$CONFIG_FILE" ;;
+      main) target="$UNIT_TARGET" ;;
+      backup-service) target="$BACKUP_SERVICE_TARGET" ;;
+      backup-timer) target="$BACKUP_TIMER_TARGET" ;;
+      alert) target="$ALERT_UNIT_TARGET" ;;
+      *) compensation_failed=true; continue ;;
+    esac
+    if [ "$snapshot_state" = present ]; then
+      mkdir -p "$(dirname "$target")" || compensation_failed=true
+      [ "$compensation_failed" = true ] || cp -a --remove-destination "$TRANSACTION_SNAPSHOT/$snapshot_name" "$target" || compensation_failed=true
+    else
+      rm -f "$target" || compensation_failed=true
+    fi
+  done < "$TRANSACTION_SNAPSHOT/manifest"
+  systemctl_cmd daemon-reload >/dev/null 2>&1 || compensation_failed=true
+  if [ "$SERVICE_WAS_ENABLED" = true ]; then
+    systemctl_cmd enable "$SERVICE_NAME" >/dev/null 2>&1 || compensation_failed=true
+  else
+    systemctl_cmd disable "$SERVICE_NAME" >/dev/null 2>&1 || compensation_failed=true
+  fi
+  if [ "$SERVICE_WAS_ACTIVE" = true ]; then
+    systemctl_cmd restart "$SERVICE_NAME" >/dev/null 2>&1 || compensation_failed=true
+    wait_healthy || compensation_failed=true
+  else
+    systemctl_cmd stop "$SERVICE_NAME" >/dev/null 2>&1 || compensation_failed=true
+  fi
+  if [ "$compensation_failed" = false ]; then
+    if ! cleanup_transaction_snapshot; then
+      write_deployment_recovery_marker snapshot-cleanup || echo "Error: deployment recovery marker write failed; retained incomplete transaction snapshot: $TRANSACTION_SNAPSHOT" >&2
+      return 1
+    fi
+    rm -f "$DEPLOYMENT_RECOVERY_MARKER"
+    return 0
+  fi
+  write_deployment_recovery_marker compensation || echo "Error: deployment recovery marker write failed; retained incomplete transaction snapshot: $TRANSACTION_SNAPSHOT" >&2
+  return 1
+}
+
+snapshot_upgrade_state() {
+  local name source state snapshot_root
+  snapshot_root="${MIMO_DEPLOY_TEST_SNAPSHOT_ROOT:-$DEPLOYMENT_TRANSACTION_ROOT}"
+  mkdir -p "$snapshot_root"
+  inject_failure snapshot-mktemp
+  TRANSACTION_SNAPSHOT="$(mktemp -d "$snapshot_root/mimo-code-webui-transaction.XXXXXX")"
+  chmod 0700 "$TRANSACTION_SNAPSHOT"
+  inject_failure snapshot-directory-created
+  install -m 0600 /dev/null "$TRANSACTION_SNAPSHOT/manifest.tmp"
+  for name in env main backup-service backup-timer alert; do
+    case "$name" in
+      env) source="$CONFIG_FILE" ;;
+      main) source="$UNIT_TARGET" ;;
+      backup-service) source="$BACKUP_SERVICE_TARGET" ;;
+      backup-timer) source="$BACKUP_TIMER_TARGET" ;;
+      alert) source="$ALERT_UNIT_TARGET" ;;
+    esac
+    if [ -f "$source" ]; then
+      inject_failure "snapshot-$name"
+      cp -a "$source" "$TRANSACTION_SNAPSHOT/$name"
+      state=present
+    else
+      state=absent
+    fi
+    printf '%s %s\n' "$name" "$state" >> "$TRANSACTION_SNAPSHOT/manifest.tmp"
+  done
+  inject_failure snapshot-manifest-finalize
+  mv "$TRANSACTION_SNAPSHOT/manifest.tmp" "$TRANSACTION_SNAPSHOT/manifest"
+  inject_failure snapshot-metadata-finalize
+  chmod 0600 "$TRANSACTION_SNAPSHOT/manifest"
+  [ "$(wc -l < "$TRANSACTION_SNAPSHOT/manifest")" -eq 5 ] || die "transaction snapshot manifest is incomplete"
+  while read -r name state; do
+    case "$state" in
+      present) [ -f "$TRANSACTION_SNAPSHOT/$name" ] || die "transaction snapshot is incomplete: $name" ;;
+      absent) [ ! -e "$TRANSACTION_SNAPSHOT/$name" ] || die "transaction snapshot is ambiguous: $name" ;;
+      *) die "transaction snapshot manifest is invalid: $name" ;;
+    esac
+  done < "$TRANSACTION_SNAPSHOT/manifest"
 }
 
 ensure_layout() {
@@ -331,18 +548,20 @@ write_config() {
   fi
   local path_value
   path_value="$(dirname "$(command -v node)"):$(dirname "$(command -v npm)"):$(dirname "$(command -v mimo)"):/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-  for pair in "PATH:$path_value" "HOST:$HOST" "PORT:$PORT" "AUTH_TOKEN:$AUTH_TOKEN" "MIMO_CONFIG_PATH:$MIMO_CONFIG" "MIMO_WORKSPACE_ROOT:$WORKSPACE_ROOT" "MIMO_SERVE_CWD:$MIMO_SERVE_CWD"; do
+  for pair in "PATH:$path_value" "HOST:$HOST" "PORT:$PORT" "MIMO_HOST:$MIMO_TARGET_HOST" "MIMO_PORT:$MIMO_TARGET_PORT" "AUTH_TOKEN:$AUTH_TOKEN" "MIMO_CONFIG_PATH:$MIMO_CONFIG" "MIMO_WORKSPACE_ROOT:$WORKSPACE_ROOT" "MIMO_SERVE_CWD:$MIMO_SERVE_CWD"; do
     validate_env_value "${pair%%:*}" "${pair#*:}"
   done
-  umask 027
+  install -m 0600 /dev/null "$CONFIG_FILE"
+  inject_failure config-file-created
   cat >"$CONFIG_FILE" <<EOF
 NODE_ENV=production
 MIMO_WEBUI_STRICT_RELEASE=true
 PATH=$path_value
 HOST=$HOST
 PORT=$PORT
-MIMO_HOST=127.0.0.1
-MIMO_PORT=4096
+MIMO_HOST=$MIMO_TARGET_HOST
+MIMO_PORT=$MIMO_TARGET_PORT
+MIMO_REUSE_EXISTING=$MIMO_REUSE_TARGET
 AUTH_TOKEN=$AUTH_TOKEN
 MIMO_CONFIG_PATH=$MIMO_CONFIG
 MIMO_WORKSPACE_ROOT=$WORKSPACE_ROOT
@@ -367,13 +586,18 @@ release_version() {
 verify_release_manifest() {
   local extracted="$1"
   [ -f "$extracted/release-manifest.json" ] || die "release is missing release-manifest.json"
-  node - "$extracted" <<'NODE'
+  node - "$extracted" "$(basename "$ARCHIVE" .tar.gz)" <<'NODE'
 const crypto = require("node:crypto")
 const fs = require("node:fs")
 const path = require("node:path")
 const root = process.argv[2]
+const archiveName = process.argv[3]
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "release-manifest.json"), "utf8"))
-if (manifest.schemaVersion !== 1 || !manifest.gitCommit || !manifest.version || !Array.isArray(manifest.files)) throw new Error("invalid release manifest")
+if (manifest.schemaVersion !== 1 || !/^[a-f0-9]{40}$/.test(manifest.gitCommit) || typeof manifest.version !== "string" || !Array.isArray(manifest.files)) throw new Error("invalid release manifest")
+if (manifest.dirty !== false) throw new Error("formal release manifest must record a clean tracked tree")
+if (archiveName !== `mimo-code-webui-v${manifest.version}`) throw new Error("release archive version does not match manifest")
+const packageMetadata = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"))
+if (packageMetadata.version !== manifest.version) throw new Error("package version does not match release manifest")
 const listed = new Set()
 for (const file of manifest.files) {
   if (!file || typeof file.path !== "string" || !Number.isSafeInteger(file.size) || file.size < 0 || !/^[a-f0-9]{64}$/.test(file.sha256)) throw new Error("invalid release manifest entry")
@@ -420,6 +644,7 @@ prepare_release() {
   find "$extracted" -type d -exec chmod 0755 {} +
   find "$extracted" -type f -exec chmod 0644 {} +
   chmod 0755 "$extracted/scripts/start.sh" "$extracted/deploy/mimo-code-webui"
+  chmod 0755 "$extracted/scripts/backup-service-state.sh"
   set_owner -R root:root "$extracted"
   mv "$extracted" "$INSTALL_ROOT/releases/$version"
   NEW_RELEASE="$INSTALL_ROOT/releases/$version"
@@ -428,7 +653,7 @@ prepare_release() {
 }
 
 backup_before_upgrade() {
-  local current script backup_root status_file mimo_config mimo_home mimo_data mimo_runtime_state mimo_state
+  local current script backup_root status_file mimo_config mimo_home mimo_data mimo_runtime_state mimo_state reuse_existing
   current="$(link_target "$INSTALL_ROOT/current")"
   script="$current/scripts/backup-state.mjs"
   if [ "$BREAK_GLASS_SKIP_BACKUP" = true ]; then
@@ -436,6 +661,8 @@ backup_before_upgrade() {
     return
   fi
   [ -f "$script" ] || die "upgrade backup gate unavailable: $script is missing; use --break-glass-skip-backup only after explicit risk acceptance"
+  reuse_existing="$(awk -F= '$1=="MIMO_REUSE_EXISTING" {value=substr($0, index($0, "=") + 1)} END {print value}' "$CONFIG_FILE")"
+  [ "$reuse_existing" != "true" ] || die "backup requires WebUI-owned MiMo processes; MIMO_REUSE_EXISTING=true"
   backup_root="${MIMO_BACKUP_ROOT:-/var/backups/mimo-code-webui}"
   status_file="${MIMO_BACKUP_STATUS_FILE:-$STATE_ROOT/backup-status.json}"
   mimo_config="$(awk -F= '$1=="MIMO_CONFIG_PATH" {print substr($0, index($0, "=") + 1)}' "$CONFIG_FILE")"
@@ -444,23 +671,68 @@ backup_before_upgrade() {
   mimo_runtime_state="$(awk -F= '$1=="MIMO_STATE_HOME" {print substr($0, index($0, "=") + 1)}' "$CONFIG_FILE")"
   mimo_state="${MIMO_STATE_DIR:-$mimo_home/.local/share/mimocode}"
   log "creating required pre-upgrade backup"
-  systemctl_cmd stop "$SERVICE_NAME"
-  if ! MIMO_BACKUP_OFFLINE=true MIMO_BACKUP_ROOT="$backup_root" MIMO_BACKUP_STATUS_FILE="$status_file" \
-    MIMO_WEBUI_CONFIG_DIR="$CONFIG_DIR" MIMO_CONFIG_DIR="$(dirname "$mimo_config")" MIMO_DATA_DIR="$mimo_data" \
-    MIMO_RUNTIME_STATE_DIR="$mimo_runtime_state" MIMO_STATE_DIR="$mimo_state" \
-    node "$script"; then
-    systemctl_cmd start "$SERVICE_NAME" >/dev/null 2>&1 || true
-    die "pre-upgrade backup failed; service start requested and upgrade blocked"
+  if [ "$SERVICE_WAS_ACTIVE" = true ] && ! systemctl_cmd stop "$SERVICE_NAME"; then
+    local recovery_result="failed to restore active service"
+    if systemctl_cmd start "$SERVICE_NAME" && wait_healthy; then recovery_result="restored active service"; fi
+    [ "$recovery_result" != "failed to restore active service" ] || write_upgrade_recovery_marker
+    TRANSACTION_ACTIVE=false
+    die "old release failed to recover after pre-upgrade backup; $recovery_result; upgrade blocked"
   fi
-  systemctl_cmd start "$SERVICE_NAME"
+  if ! { inject_failure preflight-backup && \
+    MIMO_BACKUP_OFFLINE=true MIMO_BACKUP_ROOT="$backup_root" MIMO_BACKUP_STATUS_FILE="$status_file" \
+    MIMO_WEBUI_CONFIG_DIR="$CONFIG_DIR" MIMO_CONFIG_DIR="$(dirname "$mimo_config")" MIMO_DATA_DIR="$mimo_data" \
+    MIMO_RUNTIME_STATE_DIR="$mimo_runtime_state" MIMO_STATE_DIR="$mimo_state" MIMO_REUSE_EXISTING="$reuse_existing" \
+    node "$script"; }; then
+    if restore_preflight_service; then
+      TRANSACTION_ACTIVE=false
+      die "pre-upgrade backup failed; restored prior service state and upgrade blocked"
+    fi
+    TRANSACTION_ACTIVE=false
+    write_upgrade_recovery_marker
+    die "pre-upgrade backup failed; failed to restore prior service state and upgrade blocked"
+  fi
+  if ! restore_preflight_service; then
+    local recovery_result="failed to restore active service"
+    if [ "$SERVICE_WAS_ACTIVE" = true ] && systemctl_cmd start "$SERVICE_NAME" && wait_healthy; then
+      recovery_result="restored active service"
+    fi
+    TRANSACTION_ACTIVE=false
+    [ "$recovery_result" != "failed to restore active service" ] || write_upgrade_recovery_marker
+    die "old release failed to recover after pre-upgrade backup; $recovery_result; upgrade blocked"
+  fi
+}
+
+check_backup_ownership() {
+  local reuse_existing
+  reuse_existing="$(awk -F= '$1=="MIMO_REUSE_EXISTING" {value=substr($0, index($0, "=") + 1)} END {print value}' "$CONFIG_FILE")"
+  [ "$reuse_existing" != "true" ] || die "backup requires WebUI-owned MiMo processes; MIMO_REUSE_EXISTING=true"
+}
+
+check_backup_recovery_pending() {
+  [ ! -e "$BACKUP_RESTART_MARKER" ] || die "backup service recovery is pending: $BACKUP_RESTART_MARKER; restore or clear it before deployment"
+  [ ! -e "$UPGRADE_RECOVERY_MARKER" ] || die "upgrade service recovery is pending: $UPGRADE_RECOVERY_MARKER; recover the service and clear it before deployment"
+  [ ! -e "$DEPLOYMENT_RECOVERY_MARKER" ] || die "deployment recovery is pending: $DEPLOYMENT_RECOVERY_MARKER; restore the snapshot and clear it before deployment"
+  if [ -d "$DEPLOYMENT_TRANSACTION_ROOT" ] && find "$DEPLOYMENT_TRANSACTION_ROOT" -mindepth 1 -maxdepth 1 -type d -print -quit | grep -q .; then
+    die "incomplete deployment transaction is pending under $DEPLOYMENT_TRANSACTION_ROOT; restore or remove it before deployment"
+  fi
+}
+
+write_upgrade_recovery_marker() {
+  install -D -m 0600 /dev/null "$UPGRADE_RECOVERY_MARKER"
+  printf '%s\n' "service=$SERVICE_NAME active=$SERVICE_WAS_ACTIVE" > "$UPGRADE_RECOVERY_MARKER"
+}
+
+restore_preflight_service() {
+  if [ "$SERVICE_WAS_ACTIVE" = false ]; then return 0; fi
+  systemctl_cmd start "$SERVICE_NAME" && wait_healthy
 }
 
 install_unit() {
   local release_path="$INSTALL_ROOT/releases/$1"
   install_units_for_path "$release_path" || die "release is missing required systemd units"
   INSTALLED_UNIT=true
+  inject_failure enable
   systemctl_cmd enable "$SERVICE_NAME" >/dev/null
-  systemctl_cmd enable mimo-code-webui-backup.timer >/dev/null
 }
 
 install_units_for_path() {
@@ -468,11 +740,34 @@ install_units_for_path() {
   [ -n "$release_path" ] && [ -f "$release_path/$UNIT_SOURCE" ] && \
     [ -f "$release_path/$BACKUP_SERVICE_SOURCE" ] && [ -f "$release_path/$BACKUP_TIMER_SOURCE" ] || return 1
   [ -f "$release_path/$ALERT_UNIT_SOURCE" ] || return 1
+  inject_failure copy-main-unit || return 1
   install -D -m 0644 "$release_path/$UNIT_SOURCE" "$UNIT_TARGET"
+  inject_failure copy-backup-service-unit || return 1
   install -D -m 0644 "$release_path/$BACKUP_SERVICE_SOURCE" "$BACKUP_SERVICE_TARGET"
+  inject_failure copy-backup-timer-unit || return 1
   install -D -m 0644 "$release_path/$BACKUP_TIMER_SOURCE" "$BACKUP_TIMER_TARGET"
+  inject_failure copy-alert-unit || return 1
   install -D -m 0644 "$release_path/$ALERT_UNIT_SOURCE" "$ALERT_UNIT_TARGET"
+  inject_failure daemon-reload || return 1
   systemctl_cmd daemon-reload
+}
+
+verify_rollback_safety_contract() {
+  local current="$1" target="$2" relative contract="deploy/rollback-safety-contract-v1" header
+  [ -f "$current/$contract" ] && [ -f "$target/$contract" ] \
+    || die "rollback target safety contract is incomplete: $contract"
+  cmp -s "$current/$contract" "$target/$contract" \
+    || die "rollback target safety contract mismatch: $contract"
+  header="$(sed -n '1p' "$target/$contract")"
+  [ "$header" = rollback-safety-contract-v1 ] \
+    || die "rollback target safety contract has an invalid version"
+  while IFS= read -r relative; do
+    [ -z "$relative" ] && continue
+    [[ "$relative" != /* && "$relative" != *..* ]] \
+      || die "rollback target safety contract has an unsafe path: $relative"
+    [ -f "$target/$relative" ] \
+      || die "rollback target safety contract is incomplete: $relative"
+  done < <(sed '1d' "$target/$contract")
 }
 
 link_target() {
@@ -483,11 +778,14 @@ link_target() {
 switch_release() {
   local version="$1" old
   old="$(link_target "$INSTALL_ROOT/current")"
+  inject_failure switch-current-link
   ln -s "$INSTALL_ROOT/releases/$version" "$INSTALL_ROOT/current.new"
   if [ -n "$old" ] && [ -d "$old" ]; then
     ln -s "$old" "$INSTALL_ROOT/previous.new"
+    inject_failure switch-previous-link
     mv -Tf "$INSTALL_ROOT/previous.new" "$INSTALL_ROOT/previous"
   fi
+  inject_failure switch-commit-link
   mv -Tf "$INSTALL_ROOT/current.new" "$INSTALL_ROOT/current"
 }
 
@@ -508,6 +806,15 @@ wait_healthy() {
       remaining="$(sed '1d' "$MIMO_DEPLOY_TEST_HEALTH_FILE")"
       printf '%s\n' "$remaining" > "$MIMO_DEPLOY_TEST_HEALTH_FILE"
       [ "$result" = "healthy" ]
+    elif [ -n "${MIMO_DEPLOY_TEST_HEALTH_SEQUENCE:-}" ]; then
+      local result="${MIMO_DEPLOY_TEST_HEALTH_SEQUENCE%%,*}"
+      if [ "$MIMO_DEPLOY_TEST_HEALTH_SEQUENCE" = "$result" ]; then
+        MIMO_DEPLOY_TEST_HEALTH_SEQUENCE=""
+      else
+        MIMO_DEPLOY_TEST_HEALTH_SEQUENCE="${MIMO_DEPLOY_TEST_HEALTH_SEQUENCE#*,}"
+      fi
+      export MIMO_DEPLOY_TEST_HEALTH_SEQUENCE
+      [ "$result" = "healthy" ]
     else
       [ "${MIMO_DEPLOY_TEST_HEALTH:-healthy}" = "healthy" ]
     fi
@@ -526,7 +833,7 @@ wait_healthy() {
 }
 
 restore_release() {
-  local old="$1" old_previous="${2:-}"
+  local old="$1" old_previous="${2:-}" service_was_active="${3:-true}"
   if [ -n "$old" ] && [ -d "$old" ]; then
     ln -s "$old" "$INSTALL_ROOT/current.restore"
     mv -Tf "$INSTALL_ROOT/current.restore" "$INSTALL_ROOT/current"
@@ -536,8 +843,12 @@ restore_release() {
       rm -f "$INSTALL_ROOT/previous"
     fi
     install_units_for_path "$old" || die "previous release units are missing"
-    systemctl_cmd restart "$SERVICE_NAME" || true
-    wait_healthy || die "new release failed and the previous release did not recover"
+    if [ "$service_was_active" = true ]; then
+      systemctl_cmd restart "$SERVICE_NAME" || true
+      wait_healthy || die "new release failed and the previous release did not recover"
+    else
+      systemctl_cmd stop "$SERVICE_NAME" || true
+    fi
     log "restored previous release: $(basename "$old")"
   else
     rm -f "$INSTALL_ROOT/current"
@@ -549,17 +860,21 @@ prune_releases() {
   local current previous keep=0 dir
   current="$(link_target "$INSTALL_ROOT/current")"
   previous="$(link_target "$INSTALL_ROOT/previous")"
+  [ -z "$current" ] || keep=$((keep + 1))
+  if [ -n "$previous" ] && [ "$previous" != "$current" ]; then keep=$((keep + 1)); fi
   while IFS= read -r dir; do
     [ "$dir" = "$current" ] && continue
     [ "$dir" = "$previous" ] && continue
-    keep=$((keep + 1))
-    if [ "$keep" -ge "$KEEP_RELEASES" ]; then rm -rf "$dir"; fi
+    if [ "$keep" -lt "$KEEP_RELEASES" ]; then keep=$((keep + 1)); else rm -rf "$dir"; fi
   done < <(find "$INSTALL_ROOT/releases" -mindepth 1 -maxdepth 1 -type d ! -name '.install-*' -printf '%T@ %p\n' | sort -rn | cut -d' ' -f2-)
 }
 
 deploy_release() {
   local action="$1" version old old_previous
   [ -n "$ARCHIVE" ] || die "--archive is required"
+  if [ -n "${MIMO_DEPLOY_TEST_UMASK:-}" ]; then umask "$MIMO_DEPLOY_TEST_UMASK"; fi
+  [[ "$MIMO_PROBE_TIMEOUT" =~ ^[0-9]+$ ]] && [ "$MIMO_PROBE_TIMEOUT" -ge 1 ] && [ "$MIMO_PROBE_TIMEOUT" -le 30 ] \
+    || die "MIMO_PROBE_TIMEOUT must be an integer from 1 to 30"
   ARCHIVE="$(readlink -f "$ARCHIVE")"
   [ -n "$CHECKSUM" ] && CHECKSUM="$(readlink -f "$CHECKSUM")"
   [ -n "$SIGNATURE" ] && SIGNATURE="$(readlink -f "$SIGNATURE")"
@@ -575,7 +890,23 @@ deploy_release() {
   fi
   check_runtime
   validate_archive
-  if [ "$action" = "upgrade" ]; then backup_before_upgrade; fi
+  if [ "$action" = "upgrade" ]; then read_mimo_target; fi
+  if [ "$MIMO_REUSE_TARGET" = true ] || [ "$action" = "upgrade" ]; then check_mimo_protocol; fi
+  if [ "$action" = "upgrade" ]; then
+    check_backup_ownership
+    check_backup_recovery_pending
+    OLD_CURRENT="$(link_target "$INSTALL_ROOT/current")"
+    OLD_PREVIOUS="$(link_target "$INSTALL_ROOT/previous")"
+    local service_state enabled_state
+    service_state="$(systemctl_cmd is-active "$SERVICE_NAME" 2>/dev/null || true)"
+    case "$service_state" in active) SERVICE_WAS_ACTIVE=true ;; inactive) ;; *) die "refusing upgrade from ambiguous service state: $service_state" ;; esac
+    enabled_state="$(systemctl_cmd is-enabled "$SERVICE_NAME" 2>/dev/null || true)"
+    case "$enabled_state" in enabled) SERVICE_WAS_ENABLED=true ;; disabled) ;; *) die "refusing upgrade from ambiguous service enablement: $enabled_state" ;; esac
+    UPGRADE_TRANSACTION_STARTED=true
+    snapshot_upgrade_state
+    TRANSACTION_ACTIVE=true
+    backup_before_upgrade
+  fi
   if [ "$action" = "install" ]; then
     INSTALL_TRANSACTION_STARTED=true
     ensure_layout
@@ -587,7 +918,6 @@ deploy_release() {
   OLD_CURRENT="$old"
   OLD_PREVIOUS="$old_previous"
   if [ "$action" = "upgrade" ]; then
-    UPGRADE_TRANSACTION_STARTED=true
     if [ -f "$UNIT_TARGET" ]; then
       UNIT_BACKUP="$(mktemp)"
       cp "$UNIT_TARGET" "$UNIT_BACKUP"
@@ -596,22 +926,44 @@ deploy_release() {
   [ ! -e "$INSTALL_ROOT/releases/$version" ] || die "release already installed: $version"
   prepare_release "$version"
   install_unit "$version"
+  if [ "$action" = upgrade ] && [ "$SERVICE_WAS_ENABLED" = false ]; then systemctl_cmd disable "$SERVICE_NAME" >/dev/null; fi
   switch_release "$version"
-  if ! systemctl_cmd restart "$SERVICE_NAME" || ! wait_healthy; then
-    restore_release "$old" "$old_previous"
+  if [ "$action" != "upgrade" ] || [ "$SERVICE_WAS_ACTIVE" = true ]; then
+    if systemctl_cmd restart "$SERVICE_NAME" && wait_healthy && check_mimo_protocol; then
+      :
+    else
+    restore_release "$old" "$old_previous" "$SERVICE_WAS_ACTIVE"
     die "$action failed health checks; previous release restored"
+    fi
+  else
+    if systemctl_cmd start "$SERVICE_NAME" && wait_healthy && check_mimo_protocol && systemctl_cmd stop "$SERVICE_NAME" && [ "$(systemctl_cmd is-active "$SERVICE_NAME" 2>/dev/null || true)" = inactive ]; then
+      :
+    else
+      if restore_transaction_state; then
+        TRANSACTION_ACTIVE=false
+        die "$action failed inactive candidate checks; previous release restored"
+      fi
+      die "$action failed inactive candidate checks; compensation failed; manual recovery required"
+    fi
   fi
-  prune_releases
   DEPLOY_COMMITTED=true
+  TRANSACTION_ACTIVE=false
   [ -z "$UNIT_BACKUP" ] || rm -f "$UNIT_BACKUP"
+  cleanup_transaction_snapshot
+  if ! { inject_failure prune-releases && prune_releases; }; then
+    echo "Error: deployment committed, but release prune maintenance failure requires attention" >&2
+    return 1
+  fi
   log "$action complete: $version"
   log "configuration: $CONFIG_FILE"
   log "token: sudo sed -n 's/^AUTH_TOKEN=//p' $CONFIG_FILE"
   log "logs: journalctl -u $SERVICE_NAME -f"
+  log "scheduled backups are disabled; after confirming this service owns all MiMo writers, enable them manually:"
+  log "systemctl enable --now mimo-code-webui-backup.timer"
 }
 
 rollback_release() {
-  local target old old_previous
+  local target old old_previous service_state enabled_state rollback_failed=false
   old="$(link_target "$INSTALL_ROOT/current")"
   old_previous="$(link_target "$INSTALL_ROOT/previous")"
   if [ -n "$RELEASE_NAME" ]; then
@@ -622,15 +974,74 @@ rollback_release() {
   fi
   [ -n "$target" ] && [ -d "$target" ] || die "rollback target not found"
   [ "$(dirname "$target")" = "$INSTALL_ROOT/releases" ] || die "rollback target is outside releases"
-  if ! ln -s "$target" "$INSTALL_ROOT/current.rollback" || \
-     ! mv -Tf "$INSTALL_ROOT/current.rollback" "$INSTALL_ROOT/current" || \
-     ! install_units_for_path "$target" || \
-     ! systemctl_cmd restart "$SERVICE_NAME" || \
-     ! wait_healthy; then
-    restore_release "$old" "$old_previous"
-    die "rollback target failed health checks; original release restored"
+  verify_rollback_safety_contract "$old" "$target"
+  check_backup_ownership
+  check_backup_recovery_pending
+  check_runtime
+  read_mimo_target
+  check_mimo_protocol
+  service_state="$(systemctl_cmd is-active "$SERVICE_NAME" 2>/dev/null || true)"
+  case "$service_state" in active) SERVICE_WAS_ACTIVE=true ;; inactive) ;; *) die "refusing rollback from ambiguous service state: $service_state" ;; esac
+  enabled_state="$(systemctl_cmd is-enabled "$SERVICE_NAME" 2>/dev/null || true)"
+  case "$enabled_state" in enabled) SERVICE_WAS_ENABLED=true ;; disabled) ;; *) die "refusing rollback from ambiguous service enablement: $enabled_state" ;; esac
+  OLD_CURRENT="$(readlink "$INSTALL_ROOT/current" 2>/dev/null || true)"
+  OLD_PREVIOUS="$(readlink "$INSTALL_ROOT/previous" 2>/dev/null || true)"
+  snapshot_upgrade_state
+  TRANSACTION_ACTIVE=true
+  inject_failure rollback-current-link || rollback_failed=true
+  [ "$rollback_failed" = true ] || ln -s "$target" "$INSTALL_ROOT/current.rollback" || rollback_failed=true
+  [ "$rollback_failed" = true ] || mv -Tf "$INSTALL_ROOT/current.rollback" "$INSTALL_ROOT/current" || rollback_failed=true
+  for unit_step in main backup-service backup-timer alert; do
+    [ "$rollback_failed" = true ] && break
+    inject_failure "rollback-copy-$unit_step-unit" || rollback_failed=true
+    case "$unit_step" in
+      main) install -D -m 0644 "$target/$UNIT_SOURCE" "$UNIT_TARGET" || rollback_failed=true ;;
+      backup-service) install -D -m 0644 "$target/$BACKUP_SERVICE_SOURCE" "$BACKUP_SERVICE_TARGET" || rollback_failed=true ;;
+      backup-timer) install -D -m 0644 "$target/$BACKUP_TIMER_SOURCE" "$BACKUP_TIMER_TARGET" || rollback_failed=true ;;
+      alert) install -D -m 0644 "$target/$ALERT_UNIT_SOURCE" "$ALERT_UNIT_TARGET" || rollback_failed=true ;;
+    esac
+  done
+  inject_failure rollback-daemon-reload || rollback_failed=true
+  [ "$rollback_failed" = true ] || systemctl_cmd daemon-reload || rollback_failed=true
+  inject_failure rollback-enablement || rollback_failed=true
+  if [ "$rollback_failed" = false ]; then
+    if [ "$SERVICE_WAS_ENABLED" = true ]; then systemctl_cmd enable "$SERVICE_NAME" || rollback_failed=true
+    else systemctl_cmd disable "$SERVICE_NAME" || rollback_failed=true; fi
   fi
-  if [ -n "$old" ]; then ln -sfn "$old" "$INSTALL_ROOT/previous"; fi
+  if [ "$rollback_failed" = false ] && [ "$SERVICE_WAS_ACTIVE" = true ]; then
+    inject_failure rollback-restart || rollback_failed=true
+    [ "$rollback_failed" = true ] || systemctl_cmd restart "$SERVICE_NAME" || rollback_failed=true
+    inject_failure rollback-health || rollback_failed=true
+    [ "$rollback_failed" = true ] || wait_healthy || rollback_failed=true
+    inject_failure rollback-probe || rollback_failed=true
+    [ "$rollback_failed" = true ] || ( check_mimo_protocol ) || rollback_failed=true
+  fi
+  if [ "$rollback_failed" = false ] && [ "$SERVICE_WAS_ACTIVE" = false ]; then
+    inject_failure rollback-start || rollback_failed=true
+    [ "$rollback_failed" = true ] || systemctl_cmd start "$SERVICE_NAME" || rollback_failed=true
+    inject_failure rollback-health || rollback_failed=true
+    [ "$rollback_failed" = true ] || wait_healthy || rollback_failed=true
+    inject_failure rollback-probe || rollback_failed=true
+    [ "$rollback_failed" = true ] || ( check_mimo_protocol ) || rollback_failed=true
+    inject_failure rollback-stop || rollback_failed=true
+    [ "$rollback_failed" = true ] || systemctl_cmd stop "$SERVICE_NAME" || rollback_failed=true
+    [ "$rollback_failed" = true ] || [ "$(systemctl_cmd is-active "$SERVICE_NAME" 2>/dev/null || true)" = inactive ] || rollback_failed=true
+  fi
+  inject_failure rollback-previous-link || rollback_failed=true
+  if [ "$rollback_failed" = false ]; then
+    if [ -n "$old" ]; then ln -sfn "$old" "$INSTALL_ROOT/previous" || rollback_failed=true
+    else rm -f "$INSTALL_ROOT/previous" || rollback_failed=true; fi
+  fi
+  if [ "$rollback_failed" = true ]; then
+    rm -f "$INSTALL_ROOT/current.rollback"
+    if restore_transaction_state; then
+      TRANSACTION_ACTIVE=false
+      die "rollback failed; original deployment state restored"
+    fi
+    die "rollback failed and compensation failed; manual recovery required"
+  fi
+  TRANSACTION_ACTIVE=false
+  cleanup_transaction_snapshot
   log "rollback complete: $(basename "$target")"
 }
 
@@ -706,6 +1117,7 @@ NODE
 ACTION="$1"
 shift
 parse_options "$@"
+validate_global_options
 [ "$ACTION" = "help" ] || [ "$ACTION" = "-h" ] || [ "$ACTION" = "--help" ] || [ "$ACTION" = "verify-archive" ] || require_root
 trap cleanup_failed_install EXIT
 

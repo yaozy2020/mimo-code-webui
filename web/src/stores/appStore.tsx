@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useReducer } from "react"
 import { orderMessages } from "@/lib/messageOrder"
-import { appendMessageContent, findMessageReconciliationIndex, mergeMessagePartsWithVisibleAttachments, setMessageContent } from "./appReducers"
+import { appendMessageContent, findMessageReconciliationIndex, mergeMessagePartsWithVisibleAttachments, removeEmptyAssistantMessage, removeOptimisticMessage, setMessageContent } from "./appReducers"
 import { visibleSessionIDsAfterLoad } from "./sessionVisibility"
 import type {
   AgentStatus,
@@ -217,6 +217,8 @@ type AppAction =
   | { type: "UPDATE_MESSAGE"; sessionID: string; message: Message }
   | { type: "APPEND_MESSAGE_CONTENT"; sessionID: string; messageID: string; content: string }
   | { type: "SET_MESSAGE_CONTENT"; sessionID: string; messageID: string; content: string }
+  | { type: "PROMPT_FAILED"; sessionID: string; messageID: string }
+  | { type: "REMOVE_EMPTY_ASSISTANT"; sessionID: string; messageID: string }
   | { type: "SET_STATUS"; status: AppState["status"] }
   | { type: "SET_AGENT_STATUS"; sessionID: string; status: AgentStatus }
   | { type: "SET_CONTEXT_USAGE"; sessionID: string; usage: ContextUsage }
@@ -542,6 +544,18 @@ function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         messages,
       }
+    }
+    case "PROMPT_FAILED": {
+      const messages = removeOptimisticMessage(state.messages, action.sessionID, action.messageID)
+      if (messages === state.messages) return state
+      setCachedLocalMessages(messages)
+      return { ...state, messages }
+    }
+    case "REMOVE_EMPTY_ASSISTANT": {
+      const messages = removeEmptyAssistantMessage(state.messages, action.sessionID, action.messageID)
+      if (messages === state.messages) return state
+      setCachedLocalMessages(messages)
+      return { ...state, messages }
     }
     case "SET_STATUS":
       return { ...state, status: action.status }

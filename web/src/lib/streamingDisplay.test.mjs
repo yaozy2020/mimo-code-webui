@@ -19,4 +19,19 @@ assert.equal(
   "completed content should remain stable",
 )
 
+const largeBacklog = nextStreamingDisplay("", "x".repeat(8000))
+assert.equal(
+  largeBacklog.length <= 64,
+  true,
+  "a large streaming backlog must not add dozens of rendered lines in one frame",
+)
+
+let caughtUp = ""
+const longSource = "x".repeat(8000)
+for (let frame = 0; frame < 160; frame += 1) caughtUp = nextStreamingDisplay(caughtUp, longSource)
+assert.equal(caughtUp, longSource, "an 8000-character backlog should catch up within about 3.2 seconds")
+
+const emojiBoundary = nextStreamingDisplay("", `${"x".repeat(63)}😀${"x".repeat(8000)}`)
+assert.equal(/\p{Surrogate}/u.test(emojiBoundary), false, "streaming display must not split an emoji surrogate pair")
+
 console.log("streaming display tests passed")

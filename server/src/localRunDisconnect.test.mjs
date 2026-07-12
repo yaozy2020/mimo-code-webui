@@ -7,7 +7,7 @@ const app = createApp({
   host: "127.0.0.1",
   port: 0,
   workspaceRoot: "/tmp",
-  mimoInfo: { url: "http://127.0.0.1:4096", port: 4096, pid: 0 },
+  getMimoInfo: () => ({ url: "http://127.0.0.1:4096", port: 4096, pid: 0 }),
   isMimoManaged: () => false,
   checkHealth: async () => ({ healthy: true }),
   getMimoPathInfo: async () => null,
@@ -18,7 +18,7 @@ const app = createApp({
   addMimoModelConfig: () => ({}),
   probeNativeModel: () => ({ supported: true }),
   restartMimo: async () => ({ ok: true }),
-  runMimoPrompt: async () => ({ text: "ok" }),
+  runMimoPrompt: async () => new Promise(() => {}),
   runReadonlyCliCommand: async () => ({}),
   resolveOpenAICompatibleModel: () => ({ providerID: "test", modelID: "model", baseUrl: "https://example.invalid/v1" }),
   streamOpenAICompatible: async ({ signal }, handlers) => {
@@ -50,4 +50,53 @@ try {
   console.log("local-run disconnect cancellation test passed")
 } finally {
   await new Promise((resolve) => server.close(resolve))
+}
+
+{
+  let jsonAborted = false
+  let responseStarted = false
+  const jsonApp = createApp({
+    host: "127.0.0.1",
+    port: 0,
+    workspaceRoot: "/tmp",
+    getMimoInfo: () => ({ url: "http://127.0.0.1:4096", port: 4096, pid: 0 }),
+    isMimoManaged: () => false,
+    checkHealth: async () => ({ healthy: true }),
+    getMimoPathInfo: async () => null,
+    listManagedMimoServers: () => [],
+    readMimoConfig: () => ({}),
+    listManualModels: () => [],
+    listBuiltinModels: () => [],
+    addMimoModelConfig: () => ({}),
+    probeNativeModel: () => ({ supported: true }),
+    restartMimo: async () => ({ ok: true }),
+    runMimoPrompt: async ({ signal }) => {
+      await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }))
+      jsonAborted = true
+      throw signal.reason
+    },
+    runReadonlyCliCommand: async () => ({}),
+    resolveOpenAICompatibleModel: () => ({ providerID: "test", modelID: "model", baseUrl: "https://example.invalid/v1" }),
+    streamOpenAICompatible: async () => {},
+    localRunTimeoutMs: 1000,
+  })
+  const jsonServer = http.createServer(jsonApp)
+  await new Promise((resolve) => jsonServer.listen(0, "127.0.0.1", resolve))
+  try {
+    const address = jsonServer.address()
+    const request = http.request(`http://127.0.0.1:${address.port}/local-run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    })
+    request.on("response", () => { responseStarted = true })
+    request.on("error", () => {})
+    request.end(JSON.stringify({ model: "test/model", prompt: "disconnect" }))
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    request.destroy()
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    assert.equal(jsonAborted, true, "disconnecting a JSON request should abort its provider")
+    assert.equal(responseStarted, false, "disconnecting a JSON request must not write a 504 response")
+  } finally {
+    await new Promise((resolve) => jsonServer.close(resolve))
+  }
 }
