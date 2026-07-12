@@ -38,11 +38,13 @@ This gate is intentionally local/self-hosted friendly and does not require GitHu
 
 ## Production Startup
 
-Set `MIMO_WEBUI_STRICT_RELEASE=true` in production. Strict release mode requires `node_modules`, `web/node_modules`, `server/node_modules`, `web/dist`, and `server/dist` to exist before startup. Missing artifacts fail fast so production servers do not install dependencies or build assets during service start.
+Set `MIMO_WEBUI_STRICT_RELEASE=true` in production. Strict release mode requires the built frontend/backend entrypoints and resolvable production dependencies. It never installs dependencies or builds assets during service start; npm workspace dependencies may be hoisted to the root `node_modules`.
 
 ## Request IDs
 
 Every HTTP response includes `X-Request-ID`. If a reverse proxy supplies `X-Request-ID`, the server preserves it; otherwise the server generates one. Use this value to correlate client errors with server logs.
+
+Server request and route-error logs are emitted as one-line JSON with an event name, request ID, status, and duration where applicable. Authenticated `/local-status` includes MiMo supervisor state, restart count, consecutive failures, last restart time and reason, last healthy time, and startup duration. Public `/status` intentionally omits these operational details.
 
 ## LAN Access
 
@@ -58,28 +60,42 @@ Unauthenticated LAN mode is only for trusted temporary testing:
 ALLOW_UNAUTHENTICATED_LAN=true HOST=0.0.0.0 ./scripts/start.sh
 ```
 
-## 5.6 Runtime Compatibility
+## Managed Deployment
 
-In this audit session, 5.6 background actors returned `idle`, `turnCount: 0`, and no output immediately after spawn. Treat 5.6 as untrusted for compose/subagent/background actor workflows until actor result delivery is verified.
-
-Use this rollout rule:
-
-- Direct single-agent chat may use 5.6 after a direct prompt smoke test returns non-empty output.
-- Tool-use workflows may use 5.6 after a tool call smoke test returns expected output.
-- Compose, subagent, and background actor workflows must stay on a known-stable model until a background actor smoke returns `turnCount > 0` and final output containing `READY` twice consecutively.
-
-Manual smoke prompt:
-
-```text
-spawn a background actor that returns the string READY
-```
-
-Optional local command smoke:
+Use the deployment CLI for service status and release information:
 
 ```bash
-MODEL_RUNTIME_SMOKE_55='mimo run --model libwrt/gpt-5.5 READY' \
-MODEL_RUNTIME_SMOKE_56='mimo run --model libwrt/gpt-5.6 READY' \
-npm run smoke:model-runtime
+sudo /opt/mimo-code-webui/current/deploy/mimo-code-webui status
+sudo journalctl -u mimo-code-webui -f
 ```
 
-The command smoke only verifies direct command output. Background actor workflows still require the manual actor delivery check above.
+Runtime state is separated from releases:
+
+- `/etc/mimo-code-webui/webui.env`: administrator configuration and `AUTH_TOKEN`.
+- `/var/lib/mimo-code-webui`: service home plus MiMo data/state.
+- `/srv/mimo-code-workspaces`: default workspace root; uninstall never deletes it.
+- Browser `localStorage`: per-browser preferences and entered token; it is not part of server backups.
+
+Back up `/etc/mimo-code-webui` and `/var/lib/mimo-code-webui` before host migration. To rotate authentication, update `AUTH_TOKEN`, restart the service, and enter the new token in each browser.
+
+Failed upgrades retain the failed release for diagnosis and automatically restore the previous healthy `current` symlink.
+
+## Data Ownership And Recovery
+
+MiMo Code owns its SQLite database, memory Markdown, session history, and snapshots. WebUI release rollback changes application code only; it does not restore or merge MiMo data.
+
+Do not delete `mimocode.db-wal` or `mimocode.db-shm` while MiMo may be running. Incident-specific database recovery scripts are intentionally kept outside the product repository and release packages. Recovery requires an offline, verified backup and an explicit operations runbook.
+
+### Backup health
+
+When explicitly installed and enabled, `mimo-code-webui-backup.timer` runs a daily offline snapshot with randomized delay. The oneshot stops WebUI and its managed MiMo process, writes a manifest-backed snapshot, and starts WebUI again even when backup fails. Deployments that reuse an externally owned MiMo process must not enable this timer until that owner provides an equivalent stop-the-writer boundary. Check `systemctl status mimo-code-webui-backup.timer`, `journalctl -u mimo-code-webui-backup.service`, and authenticated `/local-status` for `backup.state`.
+
+Backups older than `MIMO_BACKUP_MAX_AGE_MS` are reported as degraded. A failed attempt never deletes the previous valid backup. Before restoring, run `node scripts/backup-state.mjs verify BACKUP_DIRECTORY` in an isolated host, then validate SQLite integrity and application-level reads before replacing production data. Program rollback and data restore are always separate operator actions.
+
+For an isolated restore drill, run `node scripts/backup-state.mjs restore BACKUP_DIRECTORY EMPTY_DESTINATION`. The command refuses non-empty destinations and writes `restore-report.json` with the backup ID, file count, and measured restore duration. Validate the restored database and application behavior in that isolated destination; do not use this command to overwrite live state.
+
+### MiMo process ownership
+
+WebUI starts and owns its MiMo processes by default. It does not attach to a healthy process merely because a nearby port responds. Set `MIMO_REUSE_EXISTING=true` only when the process on the configured `MIMO_PORT` is intentionally shared and its `/path.directory` matches `MIMO_SERVE_CWD`; an explicit port never scans higher ports for a replacement.
+
+Requests carrying a validated `directory` query parameter use a dedicated managed MiMo instance for that workspace. Concurrent requests for the same directory share one startup; different directories use different ports. Graceful WebUI shutdown waits for base, running workspace, and still-starting workspace processes to exit before completing.

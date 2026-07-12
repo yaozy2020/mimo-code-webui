@@ -20,6 +20,7 @@ const { server, url } = await listen(
     workspaceRoot: "/tmp",
     mimoInfo: { url: "http://127.0.0.1:4096", port: 4096, pid: 0 },
     isMimoManaged: () => false,
+    getMimoSupervisorStatus: () => ({ restartCount: 2, consecutiveFailures: 0, lastRestartReason: "operator_request" }),
     checkHealth: async () => ({ healthy: true, version: "test" }),
     getMimoPathInfo: async () => null,
     listManagedMimoServers: () => [],
@@ -43,6 +44,7 @@ const { server, url } = await listen(
     },
     proxy: (_req, res) => res.json({ ok: true }),
     rateLimit: { windowMs: 60_000, max: 100 },
+    getBackupStatus: () => ({ state: "degraded", reason: "last backup attempt failed" }),
   }),
 )
 
@@ -74,6 +76,10 @@ try {
   const authenticatedLocalStatusBody = await authenticatedLocalStatus.text()
   assert.equal(authenticatedLocalStatusBody.includes("workspaceRoot"), true)
   assert.equal(authenticatedLocalStatusBody.includes("sk-secret"), false)
+  assert.equal(JSON.parse(authenticatedLocalStatusBody).backup.state, "degraded")
+  assert.equal(JSON.parse(authenticatedLocalStatusBody).mimo.supervisor.restartCount, 2)
+  assert.equal(statusBody.includes("restartCount"), false, "public /status should not expose supervisor metrics")
+  assert.equal(statusBody.includes("backup"), false, "public /status should not expose backup state")
 
   const login = await fetch(`${url}/login`, {
     method: "POST",

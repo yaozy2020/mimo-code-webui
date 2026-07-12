@@ -2,6 +2,10 @@ import type { Message } from "@/types"
 
 type MessagesBySession = Record<string, Message[]>
 
+export function findMessageReconciliationIndex(messages: Message[], incoming: Message) {
+  return messages.findIndex((message) => message.id === incoming.id)
+}
+
 function isVisibleAttachment(part: NonNullable<Message["parts"]>[number]) {
   return part.type === "file" || part.type === "image"
 }

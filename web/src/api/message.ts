@@ -57,6 +57,13 @@ export async function abortSession(sessionID: string, directory?: string): Promi
   await fetchJson(withDirectory(`/session/${sessionID}/abort`, directory), { method: "POST" })
 }
 
+export async function sendCommand(sessionID: string, command: string, args: string, directory?: string): Promise<void> {
+  await fetchJson(withDirectory(`/session/${sessionID}/command`, directory), {
+    method: "POST",
+    body: JSON.stringify({ command, arguments: args }),
+  })
+}
+
 export async function respondPermission(
   permissionID: string,
   response: "once" | "always" | "reject",
@@ -71,12 +78,12 @@ export async function respondPermission(
   })
 }
 
-export async function listPermissions(): Promise<PermissionRequest[]> {
-  return fetchJson<PermissionRequest[]>("/api/permission")
+export async function listPermissions(directory?: string): Promise<PermissionRequest[]> {
+  return fetchJson<PermissionRequest[]>(withDirectory("/permission", directory))
 }
 
-export async function listQuestions(): Promise<QuestionRequest[]> {
-  return fetchJson<QuestionRequest[]>("/api/question")
+export async function listQuestions(directory?: string): Promise<QuestionRequest[]> {
+  return fetchJson<QuestionRequest[]>(withDirectory("/question", directory))
 }
 
 export async function respondQuestion(

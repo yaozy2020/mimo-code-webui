@@ -1,4 +1,5 @@
 import type { StreamEvent } from "@/types"
+import { parseSSEBuffer } from "./sseParser"
 
 const API_BASE = "/api"
 
@@ -44,11 +45,26 @@ export class AuthRequiredError extends Error {
   }
 }
 
+export function parseSseFrames(buffer: string, flush = false) {
+  const normalized = buffer.replace(/\r\n/g, "\n")
+  const frames = normalized.split("\n\n")
+  const rest = flush ? "" : (frames.pop() ?? "")
+  const complete = flush ? frames.filter(Boolean).concat(rest ? [rest] : []) : frames
+  return {
+    rest,
+    data: complete.flatMap((frame) => {
+      const lines = frame.split("\n").filter((line) => line.startsWith("data:"))
+      return lines.length ? [lines.map((line) => line.slice(5).replace(/^ /, "")).join("\n")] : []
+    }),
+  }
+}
+
 export function createEventStream(
   signal: AbortSignal,
   onEvent: (event: StreamEvent) => void,
   onError?: (error: Error) => void,
   directory?: string,
+  onOpen?: () => void,
 ) {
   let cancelled = false
   let retryDelay = 1000
@@ -86,6 +102,7 @@ export function createEventStream(
       }
 
       retryDelay = 1000
+      onOpen?.()
 
       const reader = response.body?.getReader()
       if (!reader) {
@@ -101,13 +118,9 @@ export function createEventStream(
         if (done) break
 
         buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split("\n")
-        buffer = lines.pop() ?? ""
-
-        for (const raw of lines) {
-          const line = raw.trim()
-          if (!line || !line.startsWith("data:")) continue
-          const data = line.slice(5).trim()
+        const parsed = parseSSEBuffer(buffer)
+        buffer = parsed.rest
+        for (const data of parsed.data) {
           if (data === "[DONE]") continue
           try {
             const wrapper = JSON.parse(data) as { payload?: StreamEvent; syncEvent?: unknown }
@@ -117,6 +130,15 @@ export function createEventStream(
           } catch (error) {
             console.warn("[events] failed to parse event:", data, error)
           }
+        }
+      }
+      for (const data of parseSSEBuffer(buffer + decoder.decode(), true).data) {
+        if (data === "[DONE]") continue
+        try {
+          const wrapper = JSON.parse(data) as { payload?: StreamEvent }
+          if (wrapper.payload) onEvent(wrapper.payload)
+        } catch (error) {
+          console.warn("[events] failed to parse tail event:", data, error)
         }
       }
       return !cancelled && !signal.aborted
@@ -196,7 +218,7 @@ export interface RuntimeModel {
 }
 
 export async function fetchRuntimeModels(): Promise<RuntimeModel[]> {
-  const config = await fetchJson<RuntimeModelConfig>("/api/config")
+  const config = await fetchJson<RuntimeModelConfig>("/config")
   return Object.entries(config.provider ?? {}).flatMap(([provider, info]) =>
     Object.entries(info.models ?? {}).map(([id, model]) => ({
       id,
@@ -360,7 +382,7 @@ export async function restartMimoServer(): Promise<{ ok: boolean; url?: string }
   return response.json() as Promise<{ ok: boolean; url?: string }>
 }
 
-export async function runLocalPrompt(input: { model: string; prompt: string }): Promise<{ text: string }> {
+export async function runLocalPrompt(input: { model: string; prompt: string; signal?: AbortSignal }): Promise<{ text: string }> {
   const response = await fetch("/local-run", {
     method: "POST",
     credentials: "same-origin",
@@ -368,7 +390,8 @@ export async function runLocalPrompt(input: { model: string; prompt: string }): 
       "Content-Type": "application/json",
       ...getAuthHeaders(),
     },
-    body: JSON.stringify(input),
+    body: JSON.stringify({ model: input.model, prompt: input.prompt }),
+    signal: input.signal,
   })
   if (!response.ok) {
     const data = (await response.json().catch(() => ({}))) as { error?: string }
@@ -404,7 +427,7 @@ export interface LocalPromptStreamHandlers {
 }
 
 export async function runLocalPromptStream(
-  input: { model: string; prompt: string },
+  input: { model: string; prompt: string; signal?: AbortSignal },
   handlers: LocalPromptStreamHandlers,
 ) {
   const response = await fetch("/local-run/stream", {
@@ -414,7 +437,8 @@ export async function runLocalPromptStream(
       "Content-Type": "application/json",
       ...getAuthHeaders(),
     },
-    body: JSON.stringify(input),
+    body: JSON.stringify({ model: input.model, prompt: input.prompt }),
+    signal: input.signal,
   })
   if (!response.ok) {
     const data = (await response.json().catch(() => ({}))) as { error?: string }
@@ -431,13 +455,9 @@ export async function runLocalPromptStream(
     if (done) break
 
     buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split("\n")
-    buffer = lines.pop() ?? ""
-
-    for (const raw of lines) {
-      const line = raw.trim()
-      if (!line.startsWith("data:")) continue
-      const data = line.slice(5).trim()
+    const parsed = parseSSEBuffer(buffer)
+    buffer = parsed.rest
+    for (const data of parsed.data) {
       if (!data) continue
 
       const event = JSON.parse(data) as { type?: string; text?: string; error?: string }
@@ -449,6 +469,13 @@ export async function runLocalPromptStream(
       }
       if (event.type === "done") handlers.onDone?.()
     }
+  }
+  for (const data of parseSSEBuffer(buffer + decoder.decode(), true).data) {
+    if (!data) continue
+    const event = JSON.parse(data) as { type?: string; text?: string; error?: string }
+    if (event.type === "delta" && event.text) handlers.onDelta(event.text)
+    if (event.type === "error") throw new Error(event.error || "模型调用失败")
+    if (event.type === "done") handlers.onDone?.()
   }
 }
 

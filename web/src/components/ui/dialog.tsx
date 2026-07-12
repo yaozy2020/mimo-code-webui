@@ -13,7 +13,7 @@ function Dialog({ open, onOpenChange, children, contentClassName }: DialogProps)
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div className="fixed inset-0 bg-black/80" onClick={() => onOpenChange(false)} />
-      <div className={cn("relative z-50 grid w-full max-h-[calc(100dvh-1rem)] gap-4 overflow-y-auto rounded-t-2xl border bg-background p-4 shadow-2xl duration-200 sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl sm:p-6 md:max-w-lg", contentClassName)}>
+      <div className={cn("relative z-50 grid w-full max-h-[calc(100dvh-1rem)] gap-4 overflow-y-auto rounded-t-2xl border bg-background p-4 text-foreground shadow-2xl duration-200 sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl sm:p-6 md:max-w-lg", contentClassName)}>
         {children}
       </div>
     </div>

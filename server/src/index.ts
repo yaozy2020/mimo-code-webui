@@ -1,5 +1,6 @@
 import net from "node:net"
 import path from "node:path"
+import { readBackupStatus } from "./backupStatus.js"
 import { fileURLToPath } from "node:url"
 import type { Request } from "express"
 import { createApp } from "./app.js"
@@ -20,6 +21,7 @@ const HOST = process.env.HOST || "127.0.0.1"
 const MIMO_HOST = process.env.MIMO_HOST || "127.0.0.1"
 const MIMO_PREFERRED_PORT = Number(process.env.MIMO_PORT) || 4096
 const MIMO_PORT_EXPLICITLY_SET = process.env.MIMO_PORT !== undefined
+const MIMO_REUSE_EXISTING = process.env.MIMO_REUSE_EXISTING === "true"
 const AUTH_TOKEN = process.env.AUTH_TOKEN
 const ALLOW_UNAUTHENTICATED_LAN = process.env.ALLOW_UNAUTHENTICATED_LAN === "true"
 const MIMO_WORKSPACE_ROOT = path.resolve(process.env.MIMO_WORKSPACE_ROOT || getProjectRoot())
@@ -56,7 +58,10 @@ async function findAvailablePort(preferred: number, host: string, explicit: bool
 
 async function getMimoPathInfo(baseUrl: string): Promise<Record<string, unknown> | null> {
   try {
-    const response = await fetch(`${baseUrl}/path`)
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 3000)
+    const response = await fetch(`${baseUrl}/path`, { signal: controller.signal })
+    clearTimeout(timeout)
     if (!response.ok) return null
     return (await response.json()) as Record<string, unknown>
   } catch {
@@ -75,6 +80,7 @@ async function main() {
   const port = await findAvailablePort(PREFERRED_PORT, HOST, PORT_EXPLICITLY_SET)
 
   let shuttingDown = false
+  let shutdownPromise: Promise<void> | null = null
   let restartTimer: ReturnType<typeof setTimeout> | null = null
 
   async function findAvailableMimoPort(): Promise<number> {
@@ -95,12 +101,17 @@ async function main() {
   }
 
   async function findExistingMimoPort(preferred: number, host: string, scanRange = 20): Promise<number | null> {
-    for (let port = preferred; port < preferred + scanRange; port++) {
+    if (!MIMO_REUSE_EXISTING) return null
+    const limit = MIMO_PORT_EXPLICITLY_SET ? 1 : scanRange
+    for (let port = preferred; port < preferred + limit; port++) {
       const url = `http://${host}:${port}`
       try {
         const health = await checkHealth(url)
         if (health.healthy) {
-          return port
+          const pathInfo = await getMimoPathInfo(url)
+          const directory = typeof pathInfo?.directory === "string" ? path.resolve(pathInfo.directory) : null
+          if (directory === MIMO_SERVE_CWD) return port
+          console.warn(`[server] refusing to reuse mimo serve on ${url}: directory identity mismatch`)
         }
       } catch {
         // port not reachable
@@ -144,7 +155,7 @@ async function main() {
       restartTimer = null
       if (shuttingDown) return
       console.warn("[server] base mimo serve appears unhealthy, restarting...")
-      const result = await supervisor.restartBase()
+      const result = await supervisor.restartBase("health_check_failed")
       if (!result.ok) console.warn(`[server] failed to restart base mimo serve: ${result.error}`)
     }, delayMs)
   }
@@ -161,7 +172,12 @@ async function main() {
     }
   }, MIMO_HEALTH_INTERVAL_MS)
 
-  const proxy = createRoutedMimoProxy(async () => supervisor.status().base.url)
+  const proxy = createRoutedMimoProxy(async (req) => {
+    if (shuttingDown) throw new Error("WebUI server is shutting down")
+    const directory = requestDirectory(req)
+    if (!directory) return supervisor.status().base.url
+    return (await ensureMimoServerForDirectory(MIMO_HOST, supervisor.status().base.port, directory, MIMO_WORKSPACE_ROOT)).url
+  })
 
   const webDist = path.resolve(__dirname, "../../web/dist")
   const app = createApp({
@@ -171,6 +187,10 @@ async function main() {
     workspaceRoot: MIMO_WORKSPACE_ROOT,
     mimoInfo: supervisor.status().base,
     isMimoManaged: () => supervisor.status().managed,
+    getMimoSupervisorStatus: () => {
+      const { base: _base, projectServers: _projectServers, ...status } = supervisor.status()
+      return status
+    },
     checkHealth,
     getMimoPathInfo,
     listManagedMimoServers: () => supervisor.status().projectServers,
@@ -181,7 +201,7 @@ async function main() {
     probeNativeModel: (input) => probeNativeModel(input),
     restartMimo: async () => {
       console.log("[server] restarting base mimo serve via WebUI request")
-      return supervisor.restartBase()
+      return supervisor.restartBase("operator_request")
     },
     runMimoPrompt,
     runReadonlyCliCommand: async (id) => {
@@ -192,6 +212,10 @@ async function main() {
     streamOpenAICompatible,
     proxy,
     webDist,
+    getBackupStatus: () => readBackupStatus(
+      process.env.MIMO_BACKUP_STATUS_FILE || "/var/lib/mimo-code-webui/backup-status.json",
+      Number(process.env.MIMO_BACKUP_MAX_AGE_MS || 172800000),
+    ),
   })
 
   console.log(`[server] starting Express on ${HOST}:${port}`)
@@ -204,6 +228,8 @@ async function main() {
 
   // Graceful shutdown
   const shutdown = async () => {
+    if (shutdownPromise) return shutdownPromise
+    shutdownPromise = (async () => {
     console.log("[server] shutting down...")
     shuttingDown = true
     if (restartTimer) {
@@ -214,6 +240,8 @@ async function main() {
     server.close()
     await supervisor.stopAll()
     process.exit(0)
+    })()
+    return shutdownPromise
   }
 
   process.on("SIGTERM", shutdown)

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useReducer } from "react"
 import { orderMessages } from "@/lib/messageOrder"
-import { appendMessageContent, mergeMessagePartsWithVisibleAttachments, setMessageContent } from "./appReducers"
+import { appendMessageContent, findMessageReconciliationIndex, mergeMessagePartsWithVisibleAttachments, setMessageContent } from "./appReducers"
 import { visibleSessionIDsAfterLoad } from "./sessionVisibility"
 import type {
   AgentStatus,
@@ -222,12 +222,9 @@ function messageSignature(message: Message) {
   return `${message.role}:${(message.content ?? "").trim().replace(/\s+/g, " ")}`
 }
 
-function hasServerMessageForRole(messages: Message[], role: Message["role"]) {
-  return messages.some((message) => message.role === role && !message.optimistic)
-}
-
 function isDuplicateUserMessage(a: Message, b: Message) {
   if (a.role !== "user" || b.role !== "user") return false
+  if (!a.optimistic && !b.optimistic) return false
   if (messageSignature(a) !== messageSignature(b)) return false
   const aTime = a.time?.created ?? 0
   const bTime = b.time?.created ?? 0
@@ -400,12 +397,10 @@ function appReducer(state: AppState, action: AppAction): AppState {
       const existingById = new Map(existing.map((message) => [message.id, message]))
       const loadedMessages = action.messages.map((message) => mergeMessage(existingById.get(message.id), message))
       const loadedIds = new Set(loadedMessages.map((message) => message.id))
-      const loadedSignatures = new Set(loadedMessages.map(messageSignature))
       const optimisticMessages = existing.filter(
         (message) =>
           !loadedIds.has(message.id) &&
-          !loadedSignatures.has(messageSignature(message)) &&
-          !(message.optimistic && hasServerMessageForRole(loadedMessages, message.role)),
+          message.optimistic,
       )
       const nextMessages = normalizeMessages([...loadedMessages, ...optimisticMessages])
       if (messagesEqual(existing, nextMessages)) return state
@@ -422,9 +417,9 @@ function appReducer(state: AppState, action: AppAction): AppState {
       const sameErrorIndex = action.message.errorKey
         ? existing.findIndex((message) => message.errorKey === action.message.errorKey)
         : -1
-      const sameSignatureIndex = existing.findIndex((message) => messageSignature(message) === messageSignature(action.message))
+      const sameSignatureIndex = findMessageReconciliationIndex(existing, action.message)
       const optimisticIndex = !action.message.optimistic
-        ? existing.findIndex((message) => message.optimistic && message.role === action.message.role)
+        ? existing.findIndex((message) => message.optimistic && message.role === action.message.role && messageSignature(message) === messageSignature(action.message))
         : -1
       const nextMessages = exists
         ? existing.map((message) => (message.id === action.message.id ? mergeMessage(message, action.message) : message))

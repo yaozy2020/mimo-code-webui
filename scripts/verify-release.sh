@@ -11,4 +11,5 @@ if [ "${VERIFY_RELEASE_CI_INSTALL:-false}" = "true" ]; then
 fi
 
 npm run verify
+node scripts/deployment.test.mjs
 npm audit --omit=dev

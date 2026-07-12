@@ -3,7 +3,7 @@ import { Code2, FileText, FileSearch, ImagePlus, Layers, Paperclip, Send, Square
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
-import { expandSlashCommand, getSlashCommandMatches, slashCommands, type SlashAction, type SlashCommand } from "./slashCommands"
+import { getSlashCommandMatches, parseSlashCommand, slashCommands, type SlashAction, type SlashCommand } from "./slashCommands"
 import type { PromptPart } from "@/api/message"
 
 export type PromptMode = "build" | "plan" | "compose"
@@ -28,6 +28,7 @@ const modeConfig: Record<PromptMode, { icon: typeof Code2; label: string; title:
 
 interface InputBarProps {
   onSend: (text: string, mode: PromptMode, attachments: PendingAttachment[]) => void
+  onCommand: (command: string, args: string) => Promise<void>
   onAbort: () => void
   onSlashAction?: (action: SlashAction) => void
   busy: boolean
@@ -59,11 +60,12 @@ function isTextAttachment(file: File) {
   return file.type.startsWith("text/") || /\.(md|txt|json|csv|log|xml|ya?ml|ts|tsx|js|jsx|css|html|py|sh)$/i.test(file.name)
 }
 
-export function InputBar({ onSend, onAbort, onSlashAction, busy }: InputBarProps) {
+export function InputBar({ onSend, onCommand, onAbort, onSlashAction, busy }: InputBarProps) {
   const [text, setText] = useState("")
   const [mode, setMode] = useState<PromptMode>("build")
   const [attachments, setAttachments] = useState<PendingAttachment[]>([])
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
+  const [commandError, setCommandError] = useState<string | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const sendLockedRef = useRef(false)
@@ -74,18 +76,38 @@ export function InputBar({ onSend, onAbort, onSlashAction, busy }: InputBarProps
     if (!busy) sendLockedRef.current = false
   }, [busy])
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (busy || sendLockedRef.current) return
     if (!text.trim() && attachments.length === 0) return
-    const expanded = expandSlashCommand(text.trim())
-    if (expanded.handled && expanded.type === "action") {
-      runSlashAction(expanded.action)
-      setText("")
-      textareaRef.current?.focus()
+    const input = text.trim()
+    if (input.startsWith("/")) {
+      const parsed = parseSlashCommand(input)
+      if (!parsed.handled) {
+        setCommandError(parsed.error ?? "无法执行命令")
+        return
+      }
+      if (parsed.type === "action") {
+        runSlashAction(parsed.action)
+        setText("")
+        setCommandError(null)
+        textareaRef.current?.focus()
+        return
+      }
+      sendLockedRef.current = true
+      setCommandError(null)
+      try {
+        await onCommand(parsed.command, parsed.arguments)
+        setText("")
+      } catch (error) {
+        setCommandError(error instanceof Error ? error.message : String(error))
+      } finally {
+        sendLockedRef.current = false
+        textareaRef.current?.focus()
+      }
       return
     }
     sendLockedRef.current = true
-    onSend(expanded.text.trim(), expanded.mode ?? mode, attachments)
+    onSend(input, mode, attachments)
     setText("")
     setAttachments([])
     setAttachmentError(null)
@@ -114,8 +136,8 @@ export function InputBar({ onSend, onAbort, onSlashAction, busy }: InputBarProps
       window.requestAnimationFrame(() => textareaRef.current?.focus())
       return
     }
-    if (command.mode) setMode(command.mode)
-    setText(command.template?.(rest) ?? "")
+    setText(`${command.name}${rest ? ` ${rest}` : ""}`)
+    setCommandError(null)
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
 
@@ -166,7 +188,7 @@ export function InputBar({ onSend, onAbort, onSlashAction, busy }: InputBarProps
     }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
-      handleSend()
+      void handleSend()
     }
   }
 
@@ -183,7 +205,7 @@ export function InputBar({ onSend, onAbort, onSlashAction, busy }: InputBarProps
         {showSlashMenu && (
           <div className="max-h-48 overflow-auto rounded-xl border bg-popover p-1 shadow-sm">
             {slashMatches.map((command) => {
-              const Icon = command.mode ? modeConfig[command.mode].icon : FileText
+              const Icon = FileText
               return (
                 <button
                   key={command.name}
@@ -219,7 +241,7 @@ export function InputBar({ onSend, onAbort, onSlashAction, busy }: InputBarProps
             ))}
           </div>
         )}
-        {attachmentError && <p className="px-1 text-xs text-destructive">{attachmentError}</p>}
+        {(attachmentError || commandError) && <p className="px-1 text-xs text-destructive">{attachmentError ?? commandError}</p>}
         <div className="flex items-end gap-1.5 sm:gap-2">
           <div className="flex shrink-0 items-center gap-0.5 pb-0.5 pl-0.5 sm:pl-0">
             {(["build", "plan", "compose"] as const).map((m) => {
@@ -263,13 +285,15 @@ export function InputBar({ onSend, onAbort, onSlashAction, busy }: InputBarProps
           />
           <div className="shrink-0 pb-0.5 sm:pb-1">
             {busy ? (
-              <Button size="icon" variant="destructive" onClick={onAbort} className="h-8 w-8 rounded-full sm:h-9 sm:w-9">
+              <Button aria-label="停止生成" title="停止生成" size="icon" variant="destructive" onClick={onAbort} className="h-8 w-8 rounded-full sm:h-9 sm:w-9">
                 <Square className="h-4 w-4" />
               </Button>
             ) : (
               <Button
+                aria-label="发送消息"
+                title="发送消息"
                 size="icon"
-                onClick={handleSend}
+                onClick={() => void handleSend()}
                 disabled={!text.trim() && attachments.length === 0}
                 className="h-8 w-8 rounded-full sm:h-9 sm:w-9"
               >

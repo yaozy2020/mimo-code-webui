@@ -1,0 +1,689 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SERVICE_NAME="mimo-code-webui"
+SERVICE_USER="mimo-webui"
+INSTALL_ROOT="/opt/mimo-code-webui"
+CONFIG_DIR="/etc/mimo-code-webui"
+CONFIG_FILE="$CONFIG_DIR/webui.env"
+STATE_ROOT="/var/lib/mimo-code-webui"
+WORKSPACE_ROOT="/srv/mimo-code-workspaces"
+UNIT_SOURCE="deploy/systemd/mimo-code-webui.service"
+UNIT_TARGET="/etc/systemd/system/$SERVICE_NAME.service"
+LOCK_FILE="/run/lock/$SERVICE_NAME-deploy.lock"
+TEST_ROOT="${MIMO_DEPLOY_TEST_ROOT:-}"
+HEALTH_TIMEOUT=60
+KEEP_RELEASES=3
+MODE=""
+PORT=""
+ARCHIVE=""
+CHECKSUM=""
+SHA256=""
+AUTH_TOKEN=""
+MIMO_CONFIG=""
+MIMO_SERVE_CWD=""
+NON_INTERACTIVE=false
+ASSUME_YES=false
+PURGE=false
+RELEASE_NAME=""
+SEEN_INSTALL_OPTION=false
+CREATED_USER=false
+CREATED_CONFIG=false
+CREATED_STATE=false
+CREATED_WORKSPACE=false
+INSTALLED_UNIT=false
+NEW_RELEASE=""
+DEPLOY_COMMITTED=false
+INSTALL_TRANSACTION_STARTED=false
+UPGRADE_TRANSACTION_STARTED=false
+RELEASE_TEMP=""
+OLD_CURRENT=""
+OLD_PREVIOUS=""
+UNIT_BACKUP=""
+BREAK_GLASS_SKIP_BACKUP=false
+
+if [ -n "$TEST_ROOT" ]; then
+  [ "${MIMO_DEPLOY_TEST_MODE:-}" = "1" ] || die "MIMO_DEPLOY_TEST_ROOT requires MIMO_DEPLOY_TEST_MODE=1"
+  [ "${EUID:-$(id -u)}" -ne 0 ] || die "deployment test mode refuses root"
+  [ -d "$TEST_ROOT" ] && [ ! -L "$TEST_ROOT" ] && [ -O "$TEST_ROOT" ] || die "test root must be an existing, owned, non-symlink directory"
+  TEST_ROOT="$(readlink -f "$TEST_ROOT")"
+  SERVICE_USER="$(id -un)"
+  INSTALL_ROOT="$TEST_ROOT/opt/mimo-code-webui"
+  CONFIG_DIR="$TEST_ROOT/etc/mimo-code-webui"
+  CONFIG_FILE="$CONFIG_DIR/webui.env"
+  STATE_ROOT="$TEST_ROOT/var/lib/mimo-code-webui"
+  WORKSPACE_ROOT="$TEST_ROOT/srv/mimo-code-workspaces"
+  UNIT_TARGET="$TEST_ROOT/etc/systemd/system/$SERVICE_NAME.service"
+  LOCK_FILE="$TEST_ROOT/run/lock/$SERVICE_NAME-deploy.lock"
+  MIMO_BACKUP_ROOT="${MIMO_BACKUP_ROOT:-$TEST_ROOT/var/backups/mimo-code-webui}"
+fi
+
+usage() {
+  cat <<'EOF'
+Usage:
+  sudo ./deploy/mimo-code-webui install --archive RELEASE.tar.gz [options]
+  sudo ./deploy/mimo-code-webui upgrade --archive RELEASE.tar.gz [options]
+  sudo ./deploy/mimo-code-webui rollback [--release NAME]
+  sudo ./deploy/mimo-code-webui status
+  sudo ./deploy/mimo-code-webui uninstall [--purge] [--yes]
+  ./deploy/mimo-code-webui verify-archive --archive RELEASE.tar.gz
+
+Install/upgrade options:
+  --archive PATH                 Release tarball (required)
+  --checksum PATH                sha256sum sidecar (default: PATH.sha256)
+  --sha256 HEX                   Expected SHA-256 instead of a sidecar
+  --mode reverse-proxy|lan       Bind to localhost or all interfaces
+  --port PORT                    WebUI port (default: 8080 or 8090)
+  --auth-token TOKEN             Token to preserve/use; generated when omitted
+  --workspace-root PATH          Allowed workspace root
+  --mimo-serve-cwd PATH          Base mimo serve working directory
+  --mimo-config PATH             MiMo config path
+  --health-timeout SECONDS       Startup health timeout (default: 60)
+  --keep-releases COUNT          Releases retained after success (default: 3)
+  --break-glass-skip-backup      Upgrade without a backup after explicit risk acceptance
+  --non-interactive              Never read stdin
+  --yes                          Skip confirmation
+EOF
+}
+
+die() { echo "Error: $*" >&2; exit 1; }
+log() { echo "[deploy] $*"; }
+
+require_root() {
+  [ -n "$TEST_ROOT" ] || [ "${EUID:-$(id -u)}" -eq 0 ] || die "run this command with sudo"
+  [ "$(uname -s)" = "Linux" ] || die "only Linux is supported"
+  command -v systemctl >/dev/null || die "systemd is required"
+  command -v flock >/dev/null || die "flock is required"
+  mkdir -p "$(dirname "$LOCK_FILE")"
+  exec 9>"$LOCK_FILE"
+  flock -n 9 || die "another deployment operation is running"
+}
+
+systemctl_cmd() {
+  if [ -n "$TEST_ROOT" ]; then
+    printf '%s\n' "$*" >> "$TEST_ROOT/systemctl.log"
+    case "$1" in
+      is-active) printf '%s\n' "${MIMO_DEPLOY_TEST_ACTIVE:-active}" ;;
+      is-enabled) printf '%s\n' "${MIMO_DEPLOY_TEST_ENABLED:-enabled}" ;;
+      restart) [ "${MIMO_DEPLOY_TEST_RESTART_FAIL:-false}" != "true" ] ;;
+    esac
+    return
+  fi
+  systemctl "$@"
+}
+
+run_as_service() {
+  if [ -n "$TEST_ROOT" ]; then "$@"; else runuser -u "$SERVICE_USER" -- "$@"; fi
+}
+
+set_owner() {
+  [ -n "$TEST_ROOT" ] || chown "$@"
+}
+
+require_command() { command -v "$1" >/dev/null || die "$1 is required"; }
+
+check_runtime() {
+  local node_major
+  for command in node npm mimo tar sha256sum curl; do require_command "$command"; done
+  node_major="$(node -p 'Number(process.versions.node.split(".")[0])')"
+  [ "$node_major" -ge 18 ] || die "Node.js 18+ is required; found $(node --version)"
+  log "node=$(command -v node) ($(node --version))"
+  log "npm=$(command -v npm) ($(npm --version))"
+  log "mimo=$(command -v mimo) ($(mimo --version))"
+}
+
+parse_options() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --archive) ARCHIVE="${2:?missing value}"; shift 2 ;;
+      --checksum) CHECKSUM="${2:?missing value}"; shift 2 ;;
+      --sha256) SHA256="${2:?missing value}"; shift 2 ;;
+      --mode) MODE="${2:?missing value}"; SEEN_INSTALL_OPTION=true; shift 2 ;;
+      --port) PORT="${2:?missing value}"; SEEN_INSTALL_OPTION=true; shift 2 ;;
+      --auth-token) AUTH_TOKEN="${2:?missing value}"; SEEN_INSTALL_OPTION=true; shift 2 ;;
+      --workspace-root) WORKSPACE_ROOT="${2:?missing value}"; SEEN_INSTALL_OPTION=true; shift 2 ;;
+      --mimo-serve-cwd) MIMO_SERVE_CWD="${2:?missing value}"; SEEN_INSTALL_OPTION=true; shift 2 ;;
+      --mimo-config) MIMO_CONFIG="${2:?missing value}"; SEEN_INSTALL_OPTION=true; shift 2 ;;
+      --health-timeout) HEALTH_TIMEOUT="${2:?missing value}"; shift 2 ;;
+      --keep-releases) KEEP_RELEASES="${2:?missing value}"; shift 2 ;;
+      --break-glass-skip-backup) BREAK_GLASS_SKIP_BACKUP=true; shift ;;
+      --release) RELEASE_NAME="${2:?missing value}"; shift 2 ;;
+      --non-interactive) NON_INTERACTIVE=true; shift ;;
+      --yes) ASSUME_YES=true; shift ;;
+      --purge) PURGE=true; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "unknown option: $1" ;;
+    esac
+  done
+}
+
+prompt_config() {
+  if [ "$NON_INTERACTIVE" = true ]; then
+    [ -n "$MODE" ] || die "--mode is required with --non-interactive"
+  elif [ -z "$MODE" ]; then
+    echo "Choose access mode:"
+    echo "  1) Localhost only (recommended with Nginx/Caddy/SSH)"
+    echo "  2) Direct LAN access (authentication required)"
+    read -r -p "Mode [1]: " answer
+    case "${answer:-1}" in 1) MODE=reverse-proxy ;; 2) MODE=lan ;; *) die "invalid mode" ;; esac
+  fi
+  case "$MODE" in
+    reverse-proxy) HOST=127.0.0.1; PORT="${PORT:-8080}" ;;
+    lan) HOST=0.0.0.0; PORT="${PORT:-8090}" ;;
+    *) die "--mode must be reverse-proxy or lan" ;;
+  esac
+  [[ "$PORT" =~ ^[0-9]+$ ]] && [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] || die "invalid port: $PORT"
+  [[ "$HEALTH_TIMEOUT" =~ ^[0-9]+$ ]] && [ "$HEALTH_TIMEOUT" -gt 0 ] || die "invalid health timeout"
+  [[ "$KEEP_RELEASES" =~ ^[0-9]+$ ]] && [ "$KEEP_RELEASES" -ge 2 ] || die "keep-releases must be at least 2"
+
+  MIMO_SERVE_CWD="${MIMO_SERVE_CWD:-$WORKSPACE_ROOT}"
+  MIMO_CONFIG="${MIMO_CONFIG:-$STATE_ROOT/home/.config/mimocode/config.json}"
+  if [ -z "$AUTH_TOKEN" ]; then
+    AUTH_TOKEN="$(generate_token)"
+  fi
+  [ -n "$AUTH_TOKEN" ] || die "AUTH_TOKEN cannot be empty"
+
+  if [ "$NON_INTERACTIVE" = false ] && [ "$ASSUME_YES" = false ]; then
+    printf 'Install mode=%s, listen=%s:%s, workspace=%s, config=%s\n' "$MODE" "$HOST" "$PORT" "$WORKSPACE_ROOT" "$MIMO_CONFIG"
+    read -r -p "Continue? [y/N]: " answer
+    [[ "$answer" =~ ^[Yy]$ ]] || die "cancelled"
+  fi
+}
+
+generate_token() {
+  if command -v openssl >/dev/null; then
+    openssl rand -hex 32
+  else
+    od -An -N32 -tx1 /dev/urandom | tr -d ' \n'
+  fi
+}
+
+validate_env_value() {
+  local name="$1" value="$2"
+  [[ "$value" != *$'\n'* && "$value" != *$'\r'* ]] || die "$name contains a newline"
+}
+
+validate_archive() {
+  [ -f "$ARCHIVE" ] || die "release archive not found: $ARCHIVE"
+  if [ -n "$SHA256" ]; then
+    printf '%s  %s\n' "$SHA256" "$ARCHIVE" | sha256sum -c - >/dev/null || die "checksum mismatch"
+  else
+    CHECKSUM="${CHECKSUM:-$ARCHIVE.sha256}"
+    [ -f "$CHECKSUM" ] || die "checksum sidecar not found: $CHECKSUM"
+    local expected actual
+    expected="$(awk 'NR==1 {print $1}' "$CHECKSUM")"
+    actual="$(sha256sum "$ARCHIVE" | awk '{print $1}')"
+    [ "$expected" = "$actual" ] || die "checksum mismatch"
+  fi
+
+  node - "$ARCHIVE" <<'NODE'
+const { execFileSync } = require("node:child_process")
+const archive = process.argv[2]
+const names = execFileSync("tar", ["-tzf", archive], { encoding: "utf8" }).trim().split("\n")
+for (const name of names) {
+  if (!name || name.startsWith("/") || name.split("/").includes("..")) {
+    throw new Error(`unsafe archive member: ${name}`)
+  }
+}
+NODE
+  if tar -tvzf "$ARCHIVE" | awk '$1 !~ /^[d-]/ { exit 1 }'; then
+    :
+  else
+    die "release archives may contain only regular files and directories"
+  fi
+}
+
+cleanup_failed_install() {
+  local exit_code=$?
+  [ "$exit_code" -ne 0 ] || return 0
+  [ "$DEPLOY_COMMITTED" = false ] || return 0
+  [ -z "$RELEASE_TEMP" ] || rm -rf "$RELEASE_TEMP"
+  if [ "$ACTION" = "install" ] && [ "$INSTALL_TRANSACTION_STARTED" = true ]; then
+    systemctl_cmd disable --now "$SERVICE_NAME" >/dev/null 2>&1 || true
+    if [ "$INSTALLED_UNIT" = true ]; then
+      rm -f "$UNIT_TARGET"
+      systemctl_cmd daemon-reload >/dev/null 2>&1 || true
+    fi
+    rm -f "$INSTALL_ROOT/current.new" "$INSTALL_ROOT/current" "$INSTALL_ROOT/previous.new" "$INSTALL_ROOT/previous"
+    [ -z "$NEW_RELEASE" ] || rm -rf "$NEW_RELEASE"
+    if [ "$CREATED_CONFIG" = true ]; then rm -rf "$CONFIG_DIR"; fi
+    if [ "$CREATED_STATE" = true ]; then rm -rf "$STATE_ROOT"; fi
+    if [ "$CREATED_WORKSPACE" = true ]; then rmdir "$WORKSPACE_ROOT" >/dev/null 2>&1 || true; fi
+    if [ "$CREATED_USER" = true ]; then userdel "$SERVICE_USER" >/dev/null 2>&1 || true; fi
+    rmdir "$INSTALL_ROOT/releases" "$INSTALL_ROOT" >/dev/null 2>&1 || true
+  elif [ "$ACTION" = "upgrade" ] && [ "$UPGRADE_TRANSACTION_STARTED" = true ]; then
+    [ -z "$OLD_CURRENT" ] || ln -sfn "$OLD_CURRENT" "$INSTALL_ROOT/current"
+    if [ -n "$OLD_PREVIOUS" ]; then ln -sfn "$OLD_PREVIOUS" "$INSTALL_ROOT/previous"; else rm -f "$INSTALL_ROOT/previous"; fi
+    if [ -n "$UNIT_BACKUP" ] && [ -f "$UNIT_BACKUP" ]; then
+      install -D -m 0644 "$UNIT_BACKUP" "$UNIT_TARGET"
+    fi
+    systemctl_cmd daemon-reload >/dev/null 2>&1 || true
+    systemctl_cmd restart "$SERVICE_NAME" >/dev/null 2>&1 || true
+    [ -z "$NEW_RELEASE" ] || rm -rf "$NEW_RELEASE"
+  fi
+  return "$exit_code"
+}
+
+ensure_layout() {
+  [ -e "$CONFIG_DIR" ] || CREATED_CONFIG=true
+  [ -e "$STATE_ROOT" ] || CREATED_STATE=true
+  [ -e "$WORKSPACE_ROOT" ] || CREATED_WORKSPACE=true
+  if ! id "$SERVICE_USER" >/dev/null 2>&1; then
+    useradd --system --home-dir "$STATE_ROOT/home" --create-home --shell /usr/sbin/nologin "$SERVICE_USER"
+    CREATED_USER=true
+  fi
+  install -d -m 0755 "$INSTALL_ROOT" "$INSTALL_ROOT/releases"
+  install -d -m 0750 "$CONFIG_DIR"
+  install -d -m 0750 "$STATE_ROOT" "$STATE_ROOT/home" "$STATE_ROOT/data" "$STATE_ROOT/state"
+  set_owner root:"$SERVICE_USER" "$CONFIG_DIR"
+  set_owner -R "$SERVICE_USER":"$SERVICE_USER" "$STATE_ROOT"
+  if [ ! -e "$WORKSPACE_ROOT" ]; then
+    install -d -m 0750 "$WORKSPACE_ROOT"
+    set_owner "$SERVICE_USER":"$SERVICE_USER" "$WORKSPACE_ROOT"
+  fi
+  [ -d "$WORKSPACE_ROOT" ] || die "workspace root is not a directory: $WORKSPACE_ROOT"
+  [ -d "$MIMO_SERVE_CWD" ] || die "mimo serve cwd is not a directory: $MIMO_SERVE_CWD"
+  run_as_service test -r "$WORKSPACE_ROOT" -a -x "$WORKSPACE_ROOT" || die "$SERVICE_USER cannot access $WORKSPACE_ROOT"
+  if [ -e "$MIMO_CONFIG" ]; then
+    run_as_service test -r "$MIMO_CONFIG" || die "$SERVICE_USER cannot read $MIMO_CONFIG"
+  else
+    local config_parent
+    config_parent="$(dirname "$MIMO_CONFIG")"
+    if [ "$config_parent" = "$STATE_ROOT/home/.config/mimocode" ]; then
+      install -d -m 0750 "$config_parent"
+      set_owner "$SERVICE_USER":"$SERVICE_USER" "$config_parent"
+    else
+      [ -d "$config_parent" ] || die "custom MiMo config parent must already exist: $config_parent"
+      run_as_service test -w "$config_parent" -a -x "$config_parent" || die "$SERVICE_USER cannot create $MIMO_CONFIG"
+    fi
+  fi
+  for runtime in "$(command -v node)" "$(command -v mimo)"; do
+    run_as_service "$runtime" --version >/dev/null 2>&1 || die "$SERVICE_USER cannot execute $runtime; install a system-wide runtime"
+  done
+}
+
+write_config() {
+  if [ -f "$CONFIG_FILE" ]; then
+    log "preserving existing configuration: $CONFIG_FILE"
+    return
+  fi
+  local path_value
+  path_value="$(dirname "$(command -v node)"):$(dirname "$(command -v npm)"):$(dirname "$(command -v mimo)"):/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  for pair in "PATH:$path_value" "HOST:$HOST" "PORT:$PORT" "AUTH_TOKEN:$AUTH_TOKEN" "MIMO_CONFIG_PATH:$MIMO_CONFIG" "MIMO_WORKSPACE_ROOT:$WORKSPACE_ROOT" "MIMO_SERVE_CWD:$MIMO_SERVE_CWD"; do
+    validate_env_value "${pair%%:*}" "${pair#*:}"
+  done
+  umask 027
+  cat >"$CONFIG_FILE" <<EOF
+NODE_ENV=production
+MIMO_WEBUI_STRICT_RELEASE=true
+PATH=$path_value
+HOST=$HOST
+PORT=$PORT
+MIMO_HOST=127.0.0.1
+MIMO_PORT=4096
+AUTH_TOKEN=$AUTH_TOKEN
+MIMO_CONFIG_PATH=$MIMO_CONFIG
+MIMO_WORKSPACE_ROOT=$WORKSPACE_ROOT
+MIMO_SERVE_CWD=$MIMO_SERVE_CWD
+MIMO_HOME=$STATE_ROOT/home
+MIMO_DATA_HOME=$STATE_ROOT/data
+MIMO_STATE_HOME=$STATE_ROOT/state
+EOF
+  set_owner root:"$SERVICE_USER" "$CONFIG_FILE"
+  chmod 0640 "$CONFIG_FILE"
+}
+
+release_version() {
+  local base hash
+  base="$(basename "$ARCHIVE" .tar.gz)"
+  base="${base#mimo-code-webui-v}"
+  [[ "$base" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "archive name must contain only version-safe characters"
+  hash="$(sha256sum "$ARCHIVE" | cut -c1-12)"
+  printf '%s-%s\n' "$base" "$hash"
+}
+
+verify_release_manifest() {
+  local extracted="$1"
+  [ -f "$extracted/release-manifest.json" ] || die "release is missing release-manifest.json"
+  node - "$extracted" <<'NODE'
+const crypto = require("node:crypto")
+const fs = require("node:fs")
+const path = require("node:path")
+const root = process.argv[2]
+const manifest = JSON.parse(fs.readFileSync(path.join(root, "release-manifest.json"), "utf8"))
+if (manifest.schemaVersion !== 1 || !manifest.gitCommit || !manifest.version || !Array.isArray(manifest.files)) throw new Error("invalid release manifest")
+const listed = new Set()
+for (const file of manifest.files) {
+  if (!file || typeof file.path !== "string" || !Number.isSafeInteger(file.size) || file.size < 0 || !/^[a-f0-9]{64}$/.test(file.sha256)) throw new Error("invalid release manifest entry")
+  if (listed.has(file.path)) throw new Error(`duplicate manifest path: ${file.path}`)
+  listed.add(file.path)
+  const target = path.resolve(root, file.path)
+  if (!target.startsWith(`${path.resolve(root)}${path.sep}`)) throw new Error(`unsafe manifest path: ${file.path}`)
+  const content = fs.readFileSync(target)
+  const digest = crypto.createHash("sha256").update(content).digest("hex")
+  if (digest !== file.sha256 || content.length !== file.size) throw new Error(`manifest mismatch: ${file.path}`)
+}
+const actual = []
+function collect(directory, prefix = "") {
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const relative = path.posix.join(prefix, entry.name)
+    if (relative === "release-manifest.json") continue
+    if (entry.isDirectory()) collect(path.join(directory, entry.name), relative)
+    else if (entry.isFile()) actual.push(relative)
+    else throw new Error(`unsupported release entry: ${relative}`)
+  }
+}
+collect(root)
+actual.sort()
+const expected = [...listed].sort()
+if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error("manifest file set mismatch")
+NODE
+}
+
+prepare_release() {
+  local version="$1" temp="$INSTALL_ROOT/releases/.install-$version-$$" extracted
+  RELEASE_TEMP="$temp"
+  rm -rf "$temp"
+  install -d -m 0755 "$temp"
+  tar -xzf "$ARCHIVE" -C "$temp" --no-same-owner --no-same-permissions
+  extracted="$(find "$temp" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+  [ -n "$extracted" ] || die "release archive has no top-level directory"
+  [ -f "$extracted/server/dist/index.js" ] || die "release is missing server/dist/index.js"
+  [ -f "$extracted/web/dist/index.html" ] || die "release is missing web/dist/index.html"
+  verify_release_manifest "$extracted"
+  if [ -z "$TEST_ROOT" ]; then
+    (cd "$extracted" && npm ci --omit=dev --ignore-scripts)
+    (cd "$extracted" && MIMO_WEBUI_STRICT_RELEASE=true bash -n scripts/start.sh && node -e 'import("express")')
+  fi
+  find "$extracted" -type d -exec chmod 0755 {} +
+  find "$extracted" -type f -exec chmod 0644 {} +
+  chmod 0755 "$extracted/scripts/start.sh" "$extracted/deploy/mimo-code-webui"
+  set_owner -R root:root "$extracted"
+  mv "$extracted" "$INSTALL_ROOT/releases/$version"
+  NEW_RELEASE="$INSTALL_ROOT/releases/$version"
+  RELEASE_TEMP=""
+  rm -rf "$temp"
+}
+
+backup_before_upgrade() {
+  local current script backup_root status_file mimo_config mimo_home mimo_data mimo_runtime_state mimo_state
+  current="$(link_target "$INSTALL_ROOT/current")"
+  script="$current/scripts/backup-state.mjs"
+  if [ "$BREAK_GLASS_SKIP_BACKUP" = true ]; then
+    log "BREAK GLASS: upgrade backup gate explicitly bypassed"
+    return
+  fi
+  [ -f "$script" ] || die "upgrade backup gate unavailable: $script is missing; use --break-glass-skip-backup only after explicit risk acceptance"
+  backup_root="${MIMO_BACKUP_ROOT:-/var/backups/mimo-code-webui}"
+  status_file="${MIMO_BACKUP_STATUS_FILE:-$STATE_ROOT/backup-status.json}"
+  mimo_config="$(awk -F= '$1=="MIMO_CONFIG_PATH" {print substr($0, index($0, "=") + 1)}' "$CONFIG_FILE")"
+  mimo_home="$(awk -F= '$1=="MIMO_HOME" {print substr($0, index($0, "=") + 1)}' "$CONFIG_FILE")"
+  mimo_data="$(awk -F= '$1=="MIMO_DATA_HOME" {print substr($0, index($0, "=") + 1)}' "$CONFIG_FILE")"
+  mimo_runtime_state="$(awk -F= '$1=="MIMO_STATE_HOME" {print substr($0, index($0, "=") + 1)}' "$CONFIG_FILE")"
+  mimo_state="${MIMO_STATE_DIR:-$mimo_home/.local/share/mimocode}"
+  log "creating required pre-upgrade backup"
+  systemctl_cmd stop "$SERVICE_NAME"
+  if ! MIMO_BACKUP_OFFLINE=true MIMO_BACKUP_ROOT="$backup_root" MIMO_BACKUP_STATUS_FILE="$status_file" \
+    MIMO_WEBUI_CONFIG_DIR="$CONFIG_DIR" MIMO_CONFIG_DIR="$(dirname "$mimo_config")" MIMO_DATA_DIR="$mimo_data" \
+    MIMO_RUNTIME_STATE_DIR="$mimo_runtime_state" MIMO_STATE_DIR="$mimo_state" \
+    node "$script"; then
+    systemctl_cmd start "$SERVICE_NAME" >/dev/null 2>&1 || true
+    die "pre-upgrade backup failed; service start requested and upgrade blocked"
+  fi
+  systemctl_cmd start "$SERVICE_NAME"
+}
+
+install_unit() {
+  local source="$INSTALL_ROOT/releases/$1/$UNIT_SOURCE"
+  [ -f "$source" ] || die "release is missing $UNIT_SOURCE"
+  install -D -m 0644 "$source" "$UNIT_TARGET"
+  INSTALLED_UNIT=true
+  systemctl_cmd daemon-reload
+  systemctl_cmd enable "$SERVICE_NAME" >/dev/null
+}
+
+install_unit_for_path() {
+  local release_path="$1"
+  [ -n "$release_path" ] && [ -f "$release_path/$UNIT_SOURCE" ] || return 1
+  install -D -m 0644 "$release_path/$UNIT_SOURCE" "$UNIT_TARGET"
+  systemctl_cmd daemon-reload
+}
+
+link_target() {
+  [ -L "$1" ] || return 0
+  readlink -f "$1" 2>/dev/null || true
+}
+
+switch_release() {
+  local version="$1" old
+  old="$(link_target "$INSTALL_ROOT/current")"
+  ln -s "$INSTALL_ROOT/releases/$version" "$INSTALL_ROOT/current.new"
+  if [ -n "$old" ] && [ -d "$old" ]; then
+    ln -s "$old" "$INSTALL_ROOT/previous.new"
+    mv -Tf "$INSTALL_ROOT/previous.new" "$INSTALL_ROOT/previous"
+  fi
+  mv -Tf "$INSTALL_ROOT/current.new" "$INSTALL_ROOT/current"
+}
+
+health_url() {
+  local host port
+  host="$(awk -F= '$1=="HOST" {print $2}' "$CONFIG_FILE")"
+  port="$(awk -F= '$1=="PORT" {print $2}' "$CONFIG_FILE")"
+  [ "$host" = "0.0.0.0" ] && host=127.0.0.1
+  printf 'http://%s:%s/status\n' "$host" "$port"
+}
+
+wait_healthy() {
+  local url response
+  if [ -n "$TEST_ROOT" ]; then
+    if [ -n "${MIMO_DEPLOY_TEST_HEALTH_FILE:-}" ] && [ -s "$MIMO_DEPLOY_TEST_HEALTH_FILE" ]; then
+      local result remaining
+      result="$(sed -n '1p' "$MIMO_DEPLOY_TEST_HEALTH_FILE")"
+      remaining="$(sed '1d' "$MIMO_DEPLOY_TEST_HEALTH_FILE")"
+      printf '%s\n' "$remaining" > "$MIMO_DEPLOY_TEST_HEALTH_FILE"
+      [ "$result" = "healthy" ]
+    else
+      [ "${MIMO_DEPLOY_TEST_HEALTH:-healthy}" = "healthy" ]
+    fi
+    return
+  fi
+  url="$(health_url)"
+  for _ in $(seq 1 "$HEALTH_TIMEOUT"); do
+    response="$(curl -fsS "$url" 2>/dev/null || true)"
+    if [ -n "$response" ] && node -e 'const s=JSON.parse(process.argv[1]); process.exit(s.mimo?.healthy === true ? 0 : 1)' "$response"; then
+      log "healthy: $url"
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+restore_release() {
+  local old="$1" old_previous="${2:-}"
+  if [ -n "$old" ] && [ -d "$old" ]; then
+    ln -s "$old" "$INSTALL_ROOT/current.restore"
+    mv -Tf "$INSTALL_ROOT/current.restore" "$INSTALL_ROOT/current"
+    if [ -n "$old_previous" ] && [ -d "$old_previous" ]; then
+      ln -sfn "$old_previous" "$INSTALL_ROOT/previous"
+    else
+      rm -f "$INSTALL_ROOT/previous"
+    fi
+    install_unit_for_path "$old" || die "previous release unit is missing"
+    systemctl_cmd restart "$SERVICE_NAME" || true
+    wait_healthy || die "new release failed and the previous release did not recover"
+    log "restored previous release: $(basename "$old")"
+  else
+    rm -f "$INSTALL_ROOT/current"
+    systemctl_cmd stop "$SERVICE_NAME" || true
+  fi
+}
+
+prune_releases() {
+  local current previous keep=0 dir
+  current="$(link_target "$INSTALL_ROOT/current")"
+  previous="$(link_target "$INSTALL_ROOT/previous")"
+  while IFS= read -r dir; do
+    [ "$dir" = "$current" ] && continue
+    [ "$dir" = "$previous" ] && continue
+    keep=$((keep + 1))
+    if [ "$keep" -ge "$KEEP_RELEASES" ]; then rm -rf "$dir"; fi
+  done < <(find "$INSTALL_ROOT/releases" -mindepth 1 -maxdepth 1 -type d ! -name '.install-*' -printf '%T@ %p\n' | sort -rn | cut -d' ' -f2-)
+}
+
+deploy_release() {
+  local action="$1" version old old_previous
+  [ -n "$ARCHIVE" ] || die "--archive is required"
+  ARCHIVE="$(readlink -f "$ARCHIVE")"
+  [ -n "$CHECKSUM" ] && CHECKSUM="$(readlink -f "$CHECKSUM")"
+  if [ "$action" = "upgrade" ]; then
+    [ -f "$CONFIG_FILE" ] || die "upgrade requires an existing installation"
+    [ "$SEEN_INSTALL_OPTION" = false ] || die "upgrade preserves runtime configuration; edit $CONFIG_FILE separately"
+  else
+    if [ -e "$CONFIG_FILE" ] || [ -e "$INSTALL_ROOT/current" ] || [ -e "$UNIT_TARGET" ]; then
+      die "an installation already exists; use upgrade"
+    fi
+    prompt_config
+  fi
+  check_runtime
+  validate_archive
+  if [ "$action" = "upgrade" ]; then backup_before_upgrade; fi
+  if [ "$action" = "install" ]; then
+    INSTALL_TRANSACTION_STARTED=true
+    ensure_layout
+    write_config
+  fi
+  version="$(release_version)"
+  old="$(link_target "$INSTALL_ROOT/current")"
+  old_previous="$(link_target "$INSTALL_ROOT/previous")"
+  OLD_CURRENT="$old"
+  OLD_PREVIOUS="$old_previous"
+  if [ "$action" = "upgrade" ]; then
+    UPGRADE_TRANSACTION_STARTED=true
+    if [ -f "$UNIT_TARGET" ]; then
+      UNIT_BACKUP="$(mktemp)"
+      cp "$UNIT_TARGET" "$UNIT_BACKUP"
+    fi
+  fi
+  [ ! -e "$INSTALL_ROOT/releases/$version" ] || die "release already installed: $version"
+  prepare_release "$version"
+  install_unit "$version"
+  switch_release "$version"
+  if ! systemctl_cmd restart "$SERVICE_NAME" || ! wait_healthy; then
+    restore_release "$old" "$old_previous"
+    die "$action failed health checks; previous release restored"
+  fi
+  prune_releases
+  DEPLOY_COMMITTED=true
+  [ -z "$UNIT_BACKUP" ] || rm -f "$UNIT_BACKUP"
+  log "$action complete: $version"
+  log "configuration: $CONFIG_FILE"
+  log "token: sudo sed -n 's/^AUTH_TOKEN=//p' $CONFIG_FILE"
+  log "logs: journalctl -u $SERVICE_NAME -f"
+}
+
+rollback_release() {
+  local target old old_previous
+  old="$(link_target "$INSTALL_ROOT/current")"
+  old_previous="$(link_target "$INSTALL_ROOT/previous")"
+  if [ -n "$RELEASE_NAME" ]; then
+    [[ "$RELEASE_NAME" != */* && "$RELEASE_NAME" != *..* ]] || die "invalid release name"
+    target="$INSTALL_ROOT/releases/$RELEASE_NAME"
+  else
+    target="$(link_target "$INSTALL_ROOT/previous")"
+  fi
+  [ -n "$target" ] && [ -d "$target" ] || die "rollback target not found"
+  [ "$(dirname "$target")" = "$INSTALL_ROOT/releases" ] || die "rollback target is outside releases"
+  if ! ln -s "$target" "$INSTALL_ROOT/current.rollback" || \
+     ! mv -Tf "$INSTALL_ROOT/current.rollback" "$INSTALL_ROOT/current" || \
+     ! install_unit_for_path "$target" || \
+     ! systemctl_cmd restart "$SERVICE_NAME" || \
+     ! wait_healthy; then
+    restore_release "$old" "$old_previous"
+    die "rollback target failed health checks; original release restored"
+  fi
+  if [ -n "$old" ]; then ln -sfn "$old" "$INSTALL_ROOT/previous"; fi
+  log "rollback complete: $(basename "$target")"
+}
+
+show_status() {
+  echo "current=$(basename "$(link_target "$INSTALL_ROOT/current")")"
+  echo "previous=$(basename "$(link_target "$INSTALL_ROOT/previous")")"
+  echo "active=$(systemctl_cmd is-active "$SERVICE_NAME" 2>/dev/null || true)"
+  echo "enabled=$(systemctl_cmd is-enabled "$SERVICE_NAME" 2>/dev/null || true)"
+  if [ -r "$CONFIG_FILE" ]; then
+    awk -F= '$1=="HOST" || $1=="PORT" || $1=="MIMO_WORKSPACE_ROOT" {print}' "$CONFIG_FILE"
+    grep -q '^AUTH_TOKEN=.' "$CONFIG_FILE" && echo 'AUTH_TOKEN=configured' || echo 'AUTH_TOKEN=missing'
+    if wait_healthy; then return 0; fi
+  fi
+  echo "health=unhealthy"
+  return 1
+}
+
+verify_archive_only() {
+  [ -n "$ARCHIVE" ] || die "--archive is required"
+  ARCHIVE="$(readlink -f "$ARCHIVE")"
+  [ -n "$CHECKSUM" ] && CHECKSUM="$(readlink -f "$CHECKSUM")"
+  check_runtime
+  validate_archive
+  local temp extracted
+  temp="$(mktemp -d)"
+  trap 'rm -rf "$temp"' RETURN
+  tar -xzf "$ARCHIVE" -C "$temp" --no-same-owner --no-same-permissions
+  extracted="$(find "$temp" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+  [ -n "$extracted" ] || die "release archive has no top-level directory"
+  verify_release_manifest "$extracted"
+  log "archive and manifest verified"
+}
+
+uninstall_service() {
+  local backup_status="${MIMO_BACKUP_STATUS_FILE:-$STATE_ROOT/backup-status.json}" current
+  if [ "$PURGE" = true ] && [ "$ASSUME_YES" = false ]; then
+    [ "$NON_INTERACTIVE" = false ] || die "--purge in non-interactive mode requires --yes"
+    read -r -p "Delete releases, configuration, and WebUI state? Workspace is retained. [y/N]: " answer
+    [[ "$answer" =~ ^[Yy]$ ]] || die "cancelled"
+  fi
+  if [ "$PURGE" = true ] && [ "$BREAK_GLASS_SKIP_BACKUP" = false ]; then
+    node - "$backup_status" "$STATE_ROOT" "$CONFIG_DIR" "$INSTALL_ROOT" <<'NODE' || die "purge requires a recent verified external backup; use --break-glass-skip-backup only after explicit risk acceptance"
+const fs = require("node:fs")
+const path = require("node:path")
+const status = JSON.parse(fs.readFileSync(process.argv[2], "utf8"))
+if (status.state !== "healthy" || !status.lastSuccessAt || !status.backup) process.exit(1)
+const age = Date.now() - Date.parse(status.lastSuccessAt)
+if (!Number.isFinite(age) || age < 0 || age > 172800000) process.exit(1)
+const backup = fs.realpathSync(status.backup)
+for (const unsafe of process.argv.slice(3)) {
+  const root = path.resolve(unsafe)
+  if (backup === root || backup.startsWith(`${root}${path.sep}`)) process.exit(1)
+}
+NODE
+    current="$(link_target "$INSTALL_ROOT/current")"
+    node "$current/scripts/backup-state.mjs" verify "$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).backup' "$backup_status")" \
+      || die "purge backup manifest verification failed"
+  fi
+  if [ "$PURGE" = true ] && [ "$BREAK_GLASS_SKIP_BACKUP" = true ]; then
+    log "BREAK GLASS: purge backup gate explicitly bypassed"
+  fi
+  systemctl_cmd disable --now "$SERVICE_NAME" >/dev/null 2>&1 || true
+  rm -f "$UNIT_TARGET"
+  systemctl_cmd daemon-reload
+  if [ "$PURGE" = true ]; then rm -rf "$INSTALL_ROOT" "$CONFIG_DIR" "$STATE_ROOT"; fi
+  log "uninstalled; workspace retained at $WORKSPACE_ROOT"
+}
+
+[ "$#" -gt 0 ] || { usage; exit 1; }
+ACTION="$1"
+shift
+parse_options "$@"
+[ "$ACTION" = "help" ] || [ "$ACTION" = "-h" ] || [ "$ACTION" = "--help" ] || [ "$ACTION" = "verify-archive" ] || require_root
+trap cleanup_failed_install EXIT
+
+case "$ACTION" in
+  install|upgrade) deploy_release "$ACTION" ;;
+  rollback) rollback_release ;;
+  status) show_status ;;
+  uninstall) uninstall_service ;;
+  verify-archive) verify_archive_only ;;
+  help|-h|--help) usage ;;
+  *) die "unknown action: $ACTION" ;;
+esac

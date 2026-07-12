@@ -6,6 +6,7 @@ export function useSessions() {
   const dispatch = useAppDispatch()
   const { sessions, activeSessionID, ownedSessionIDs, attachedSessionIDs } = useAppState()
   const visibleSessionIDs = new Set([...ownedSessionIDs, ...attachedSessionIDs])
+  const visibleSessionKey = [...visibleSessionIDs].sort().join("\0")
   const visibleSessions = sessions.filter((session) => visibleSessionIDs.has(session.id))
 
   const load = useCallback(async () => {
@@ -22,7 +23,7 @@ export function useSessions() {
     } catch (error) {
       console.error("[useSessions] failed to load sessions:", error)
     }
-  }, [attachedSessionIDs, dispatch, ownedSessionIDs])
+  }, [dispatch, visibleSessionKey])
 
   const create = useCallback(
     async (directory?: string) => {

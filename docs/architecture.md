@@ -18,3 +18,9 @@ Current source-of-truth documents are:
 - `docs/architecture.md` for module boundaries.
 
 Historical compose plans are execution records and may not describe current code.
+
+## Data Ownership And Backups
+
+WebUI releases, WebUI configuration, MiMo configuration, MiMo state, and workspaces are separate ownership layers. Release rollback changes application code only and never restores MiMo data. The backup timer archives WebUI/MiMo configuration and MiMo state, but deliberately excludes workspace trees; workspace backup remains an external operator responsibility.
+
+SQLite files are copied only while the WebUI service and its managed MiMo process are stopped. A live single-file database copy is rejected. Every completed backup contains `backup-manifest.json` with the complete file set, sizes, and SHA-256 digests, and `scripts/backup-state.mjs verify <directory>` validates it before restoration.

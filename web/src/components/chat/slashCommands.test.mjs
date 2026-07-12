@@ -1,57 +1,47 @@
 import assert from "node:assert/strict"
-import { expandSlashCommand, getSlashCommandMatches } from "./slashCommands.ts"
+import { getSlashCommandMatches, parseSlashCommand } from "./slashCommands.ts"
 
 assert.deepEqual(
-  expandSlashCommand("/fix 修复登录失败"),
-  { handled: true, type: "prompt", mode: "build", text: "修复这个问题：修复登录失败" },
-  "/fix should expand to a build prompt",
+  parseSlashCommand("/init 补充项目规则"),
+  { handled: true, type: "command", command: "init", arguments: "补充项目规则" },
+  "/init should execute the native MiMo command",
 )
 
-const review = expandSlashCommand("/review")
-assert.equal(review.handled, true)
-assert.equal(review.type, "prompt")
-assert.equal(review.mode, "plan")
-assert.match(review.text, /代码审查/)
+assert.deepEqual(
+  parseSlashCommand("/review"),
+  { handled: true, type: "command", command: "review", arguments: "" },
+  "/review should execute the native MiMo command",
+)
 
 assert.ok(
-  getSlashCommandMatches("/te").some((command) => command.name === "/test"),
-  "partial slash input should match /test",
+  getSlashCommandMatches("/di").some((command) => command.name === "/distill"),
+  "partial slash input should match a native command",
+)
+
+assert.deepEqual(parseSlashCommand("普通输入"), { handled: false }, "normal input should remain a prompt")
+
+assert.deepEqual(
+  parseSlashCommand("/models"),
+  { handled: true, type: "action", action: "models" },
+  "/models should execute a WebUI action",
 )
 
 assert.deepEqual(
-  expandSlashCommand("普通输入"),
-  { handled: false, mode: undefined, text: "普通输入" },
-  "normal input should pass through unchanged",
-)
-
-assert.deepEqual(
-  expandSlashCommand("/models"),
-  { handled: true, type: "action", action: "models", text: "" },
-  "/models should execute a WebUI model action",
-)
-
-assert.deepEqual(
-  expandSlashCommand("/resume"),
-  { handled: true, type: "action", action: "sessions", text: "" },
+  parseSlashCommand("/resume"),
+  { handled: true, type: "action", action: "sessions" },
   "/resume should alias the sessions action",
 )
 
-const compact = expandSlashCommand("/compact 保留当前目标和未完成任务")
-assert.equal(compact.handled, true)
-assert.equal(compact.type, "prompt")
-assert.equal(compact.mode, "plan")
-assert.match(compact.text, /总结并压缩当前会话上下文/)
-assert.match(compact.text, /保留当前目标和未完成任务/)
+assert.deepEqual(
+  parseSlashCommand("/compact"),
+  { handled: false, error: "不支持的命令：/compact" },
+  "unsupported built-ins must not be converted into prompts",
+)
 
-const summarize = expandSlashCommand("/summarize")
-assert.equal(summarize.handled, true)
-assert.equal(summarize.type, "prompt")
-assert.equal(summarize.mode, "plan")
-assert.match(summarize.text, /总结并压缩当前会话上下文/)
-
-assert.ok(
-  getSlashCommandMatches("/con").some((command) => command.name === "/continue"),
-  "partial slash input should match /continue",
+assert.deepEqual(
+  parseSlashCommand("/fix 修复登录失败"),
+  { handled: false, error: "不支持的命令：/fix" },
+  "legacy prompt templates must not be sent as prompts",
 )
 
 console.log("slash command tests passed")

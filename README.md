@@ -11,7 +11,7 @@ Cross-platform web UI for [MiMo-Code](https://github.com/XiaomiMiMo/MiMo-Code).
 - Settings and diagnostics
 - Runs on Linux and Windows
 - Optional Bearer token authentication
-- LAN access out of the box
+- Authenticated LAN access through the Linux installer or explicit settings
 
 ## Architecture
 
@@ -19,18 +19,37 @@ Cross-platform web UI for [MiMo-Code](https://github.com/XiaomiMiMo/MiMo-Code).
 - **Backend**: Node.js + Express
 - **Engine**: MiMo-Code `mimo serve` process managed by the backend
 
-## Quick Start From Release Package
+## Linux One-Command Install
 
 ### Requirements
 
-- Node.js 18+
-- MiMo-Code CLI (`mimo`) installed
+- Linux with systemd
+- Node.js 18+, npm, and the MiMo-Code CLI (`mimo`)
+- A release archive and its `.sha256` file
 
-1. Download and extract `mimo-code-webui-v0.1.0.tar.gz`.
-2. Start with `./scripts/start.sh` on Linux or `scripts\start.bat` on Windows.
-3. Open the printed WebUI URL in your browser.
+Extract the release package, then run:
 
-For long-running Linux server deployment without Docker, see `docs/deployment.md`. It covers release-package installation, systemd, Nginx, Caddy, upgrades, logs, and rollback.
+```bash
+sudo ./deploy/mimo-code-webui install \
+  --archive ./mimo-code-webui-v0.1.0.tar.gz
+```
+
+The installer asks whether to use localhost behind Nginx/Caddy/SSH or direct authenticated LAN access. It creates the service user, generates a random token, configures systemd, starts the service, and verifies WebUI and MiMo health.
+
+For unattended installation:
+
+```bash
+sudo ./deploy/mimo-code-webui install \
+  --non-interactive --yes \
+  --archive ./mimo-code-webui-v0.1.0.tar.gz \
+  --mode reverse-proxy
+```
+
+See `docs/deployment.md` for LAN mode, upgrades, rollback, status, uninstall, and optional reverse proxies.
+
+## Portable Release Start
+
+For a temporary foreground process rather than a managed Linux service, extract the release and run `./scripts/start.sh` on Linux or `scripts\start.bat` on Windows.
 
 Use `.env.example` as the production environment variable template.
 
@@ -136,25 +155,7 @@ API Key, Base URL, Model, and WebUI Auth Token can be configured in the Settings
 
 The primary MiMo config path is `~/.config/mimocode/config.json`. On startup, the WebUI migrates a readable legacy `~/.mimo/mimo.config.json` into the primary path only when the primary path is missing or empty. See `docs/operations.md` for runtime configuration and migration details.
 
-### Optional MiMo Watchdog
-
-The WebUI backend already monitors and restarts the base `mimo serve` process when it started that process itself. Use `scripts/mimo-watchdog.sh` only as a manual fallback for deployments where the WebUI server cannot be restarted yet.
-
-```bash
-scripts/mimo-watchdog.sh
-```
-
-Useful environment variables:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MIMO_HOST` | `127.0.0.1` | Hostname for the watched `mimo serve`. |
-| `MIMO_PORT` | `4096` | Port for the watched `mimo serve`. |
-| `WATCHDOG_INTERVAL_SEC` | `5` | Health-check interval in seconds. |
-| `WATCHDOG_LOG` | `/tmp/mimo-watchdog.log` | Log file path. |
-| `WATCHDOG_PID_FILE` | `/tmp/mimo-watchdog-<port>.pid` | PID file for the process started by the watchdog. |
-
-The watchdog only stops a process recorded in its own PID file. It does not kill arbitrary `mimo serve` processes on the same port, so a manually started instance remains under your control.
+The WebUI backend is the only supported supervisor for `mimo serve`. Do not run a second watchdog or pre-start an unmanaged MiMo process for normal deployment.
 
 ## Operations
 

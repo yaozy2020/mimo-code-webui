@@ -3,10 +3,12 @@ import crypto from "node:crypto"
 import express, { type NextFunction, type Request, type Response } from "express"
 import fs from "node:fs"
 import path from "node:path"
+import type { BackupStatus } from "./backupStatus.js"
 import type { ManualModelInput } from "./config.js"
 import type { OpenAIStreamHandlers, OpenAIStreamInput, OpenAIStreamModel } from "./openaiStream.js"
 import { createPublicConfigSummary } from "./status.js"
 import { validateWorkspaceDirectory } from "./workspacePolicy.js"
+import { logEvent } from "./log.js"
 
 type MimoInfo = { url: string; port: number; pid: number }
 type HandlerResult<T> = T | Promise<T>
@@ -22,6 +24,7 @@ export interface AppOptions {
   workspaceRoot: string
   mimoInfo: MimoInfo
   isMimoManaged: () => boolean
+  getMimoSupervisorStatus?: () => unknown
   checkHealth: (baseUrl: string) => Promise<{ healthy: boolean; version?: string }>
   getMimoPathInfo: (baseUrl: string) => Promise<Record<string, unknown> | null>
   listManagedMimoServers: () => unknown
@@ -38,6 +41,7 @@ export interface AppOptions {
   proxy?: express.RequestHandler
   webDist?: string
   rateLimit?: { windowMs: number; max: number }
+  getBackupStatus?: () => BackupStatus
 }
 
 function publicError(message: string) {
@@ -46,8 +50,11 @@ function publicError(message: string) {
 
 function logRouteError(context: string, error: unknown, req?: Request) {
   const requestID = req?.headers["x-request-id"]
-  const prefix = typeof requestID === "string" ? `[app] [${requestID}]` : "[app]"
-  console.error(`${prefix} ${context}:`, error instanceof Error ? error.message : error)
+  logEvent("error", "route_error", {
+    requestId: typeof requestID === "string" ? requestID : undefined,
+    context,
+    error: error instanceof Error ? error.message : String(error),
+  })
 }
 
 function parseCookies(header: string | undefined) {
@@ -137,6 +144,14 @@ export function createApp(options: AppOptions) {
       : crypto.randomUUID()
     req.headers["x-request-id"] = requestID
     res.setHeader("X-Request-ID", requestID)
+    const startedAt = Date.now()
+    res.on("finish", () => logEvent("info", "http_request", {
+      requestId: requestID,
+      method: req.method,
+      path: req.path,
+      status: res.statusCode,
+      durationMs: Date.now() - startedAt,
+    }))
     next()
   })
   app.use((req, res, next) => {
@@ -159,8 +174,10 @@ export function createApp(options: AppOptions) {
         workspaceRoot: options.workspaceRoot,
         projectServers: options.listManagedMimoServers(),
         path: pathInfo,
+        supervisor: options.getMimoSupervisorStatus?.(),
       },
       config: createPublicConfigSummary(options.readMimoConfig()),
+      backup: options.getBackupStatus?.() ?? { state: "unknown" },
       authRequired: !!options.authToken,
     }
   }

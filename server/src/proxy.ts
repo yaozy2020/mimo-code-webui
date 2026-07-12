@@ -4,6 +4,15 @@ import { createProxyMiddleware } from "http-proxy-middleware"
 
 const MAX_ROUTED_PROXIES = 32
 
+export async function resolveMimoTarget(input: {
+  directory?: string
+  baseUrl: string
+  ensureDirectoryServer: (directory: string) => Promise<{ url: string }>
+}) {
+  if (!input.directory) return input.baseUrl
+  return (await input.ensureDirectoryServer(input.directory)).url
+}
+
 export function createMimoProxy(targetUrl: string) {
   return createProxyMiddleware({
     target: targetUrl,
@@ -46,7 +55,7 @@ export function createRoutedMimoProxy(resolveTargetUrl: (req: Request) => Promis
     } catch (error) {
       console.error(`[proxy] failed to resolve target for ${req.method} ${req.path}:`, error)
       if (!res.headersSent) {
-        res.status(502).json({ error: error instanceof Error ? error.message : "Failed to resolve mimo serve target" })
+        res.status(502).json({ error: "Failed to resolve mimo serve target" })
       }
     }
   }

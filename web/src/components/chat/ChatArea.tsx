@@ -27,7 +27,7 @@ export function ChatArea({ onSlashAction }: ChatAreaProps) {
   const activeDirectory = activeSession?.directory
 
   useActiveSessionData({ activeSessionID, activeDirectory })
-  const { busy, handleSend, handleAbort } = usePromptController({ activeSessionID, activeDirectory })
+  const { busy, handleSend, handleCommand, handleAbort } = usePromptController({ activeSessionID, activeDirectory })
 
   const sessionMessages = activeSessionID ? messages[activeSessionID] || [] : []
 
@@ -92,7 +92,7 @@ export function ChatArea({ onSlashAction }: ChatAreaProps) {
         {(sessionMessages.length > 0 || busy) && <MessageList />}
         <PermissionDialog />
         <QuestionDialog />
-        <InputBar onSend={handleSend} onAbort={handleAbort} onSlashAction={handleSlashAction} busy={busy} />
+        <InputBar onSend={handleSend} onCommand={handleCommand} onAbort={handleAbort} onSlashAction={handleSlashAction} busy={busy} />
         <WorkspaceSessionDialog open={workspaceDialogOpen} onOpenChange={setWorkspaceDialogOpen} defaultWorkspace={activeDirectory} />
       </div>
       {activeSessionID && showFileChanges && (sessionDiffs[activeSessionID]?.length ?? 0) > 0 && (

@@ -26,6 +26,8 @@ export function useActiveSessionData(input: { activeSessionID: string | null; ac
         if (messageID) {
           const diff = await getSessionDiff(activeSessionID, messageID, activeDirectory)
           if (!cancelled) dispatch({ type: "SET_SESSION_DIFF", sessionID: activeSessionID, diff })
+        } else if (!cancelled) {
+          dispatch({ type: "SET_SESSION_DIFF", sessionID: activeSessionID, diff: [] })
         }
       } catch (error) {
         console.error("[ChatArea] failed to load messages:", error)
@@ -70,10 +72,13 @@ export function useActiveSessionData(input: { activeSessionID: string | null; ac
         }
         const msgs = await getMessages(activeSessionID, 50, undefined, activeDirectory)
         if (!cancelled) {
+          dispatch({ type: "SET_MESSAGES", sessionID: activeSessionID, messages: msgs })
           const messageID = latestUserMessageID(msgs)
           if (messageID) {
             const diff = await getSessionDiff(activeSessionID, messageID, activeDirectory)
             if (!cancelled) dispatch({ type: "SET_SESSION_DIFF", sessionID: activeSessionID, diff })
+          } else {
+            dispatch({ type: "SET_SESSION_DIFF", sessionID: activeSessionID, diff: [] })
           }
         }
       } catch (error) {

@@ -70,32 +70,37 @@ if ! "$NODE_BIN" --version &> /dev/null; then
   exit 1
 fi
 
-if ! command -v npm &> /dev/null; then
-  echo "Error: npm is not available in PATH. Install npm or use a prebuilt release package."
+NODE_MAJOR="$($NODE_BIN -p 'Number(process.versions.node.split(".")[0])')"
+if [ "$NODE_MAJOR" -lt 18 ]; then
+  echo "Error: Node.js 18+ is required; found $($NODE_BIN --version)."
   exit 1
 fi
 
-echo "[start] using npm: $(command -v npm)"
-
 if [ "${MIMO_WEBUI_STRICT_RELEASE:-false}" = "true" ]; then
-  missing=0
-  for required_path in "node_modules" "web/node_modules" "server/node_modules" "web/dist" "server/dist"; do
-    if [ ! -d "$required_path" ]; then
-      echo "Error: strict release mode requires $required_path to exist. Build and package the release before starting."
-      missing=1
+  for required_path in "web/dist/index.html" "server/dist/index.js"; do
+    if [ ! -f "$required_path" ]; then
+      echo "Error: strict release mode requires $required_path. Install a complete release package."
+      exit 1
     fi
   done
-  if [ "$missing" -ne 0 ]; then
+  if ! "$NODE_BIN" -e 'import("express")' >/dev/null 2>&1; then
+    echo "Error: strict release mode requires installed production dependencies. Run npm ci --omit=dev during installation."
     exit 1
   fi
+else
+  if ! command -v npm &> /dev/null; then
+    echo "Error: npm is not available in PATH. Install npm before source startup."
+    exit 1
+  fi
+  echo "[start] using npm: $(command -v npm)"
 fi
 
-if [ ! -d "node_modules" ] || [ ! -d "web/node_modules" ] || [ ! -d "server/node_modules" ]; then
+if [ "${MIMO_WEBUI_STRICT_RELEASE:-false}" != "true" ] && [ ! -d "node_modules" ]; then
   echo "Installing dependencies..."
   npm install
 fi
 
-if [ ! -d "web/dist" ] || [ ! -d "server/dist" ]; then
+if [ "${MIMO_WEBUI_STRICT_RELEASE:-false}" != "true" ] && { [ ! -d "web/dist" ] || [ ! -d "server/dist" ]; }; then
   echo "Building project..."
   npm run build
 fi

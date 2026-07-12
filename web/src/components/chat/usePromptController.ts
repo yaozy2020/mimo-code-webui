@@ -1,6 +1,6 @@
-import { useCallback } from "react"
+import { useCallback, useRef } from "react"
 import { fetchRuntimeModels, runLocalPrompt, runLocalPromptStream } from "@/api/client"
-import { abortSession, modelSelectionToPayload, sendPrompt } from "@/api/message"
+import { abortSession, modelSelectionToPayload, sendCommand, sendPrompt } from "@/api/message"
 import { createClientID } from "@/lib/utils"
 import { useAppDispatch, useAppState } from "@/stores/appStore"
 import type { Message } from "@/types"
@@ -11,6 +11,7 @@ export function usePromptController(input: { activeSessionID: string | null; act
   const dispatch = useAppDispatch()
   const { agentStatus, settings } = useAppState()
   const { activeSessionID, activeDirectory } = input
+  const localAbortRef = useRef<{ controller: AbortController; sessionID: string; directory?: string } | null>(null)
   const busy = activeSessionID ? agentStatus[activeSessionID]?.state === "busy" : false
 
   const handleSend = useCallback(
@@ -61,6 +62,8 @@ export function usePromptController(input: { activeSessionID: string | null; act
         const route = chooseModelRoute({ selectedModel, nativeModelKeys: nativeKeys })
 
         if (route === "local-run") {
+          const localAbort = new AbortController()
+          localAbortRef.current = { controller: localAbort, sessionID: activeSessionID, directory: activeDirectory }
           const assistantMessageID = createClientID("msg")
           dispatch({
             type: "ADD_MESSAGE",
@@ -77,7 +80,7 @@ export function usePromptController(input: { activeSessionID: string | null; act
           let receivedDelta = false
           try {
             await runLocalPromptStream(
-              { model: settings.model, prompt: text || promptParts.map((p) => p.content).join("\n") },
+              { model: settings.model, prompt: text || promptParts.map((p) => p.content).join("\n"), signal: localAbort.signal },
               {
                 onDelta: (delta) => {
                   receivedDelta = true
@@ -86,8 +89,9 @@ export function usePromptController(input: { activeSessionID: string | null; act
               },
             )
           } catch (streamError) {
+            if (streamError instanceof DOMException && streamError.name === "AbortError") throw streamError
             if (!receivedDelta) {
-              const result = await runLocalPrompt({ model: settings.model, prompt: text || promptParts.map((p) => p.content).join("\n") })
+              const result = await runLocalPrompt({ model: settings.model, prompt: text || promptParts.map((p) => p.content).join("\n"), signal: localAbort.signal })
               dispatch({
                 type: "SET_MESSAGE_CONTENT",
                 sessionID: activeSessionID,
@@ -104,6 +108,7 @@ export function usePromptController(input: { activeSessionID: string | null; act
             sessionID: activeSessionID,
             status: { sessionID: activeSessionID, state: "idle" },
           })
+          localAbortRef.current = null
           return
         }
 
@@ -114,6 +119,11 @@ export function usePromptController(input: { activeSessionID: string | null; act
           directory: activeDirectory,
         })
       } catch (error) {
+        localAbortRef.current = null
+        if (error instanceof DOMException && error.name === "AbortError") {
+          dispatch({ type: "SET_AGENT_STATUS", sessionID: activeSessionID, status: { sessionID: activeSessionID, state: "idle" } })
+          return
+        }
         console.error("[ChatArea] failed to send prompt:", error)
         dispatch({
           type: "SET_AGENT_STATUS",
@@ -135,8 +145,22 @@ export function usePromptController(input: { activeSessionID: string | null; act
 
   const handleAbort = useCallback(async () => {
     if (!activeSessionID) return
+    const localRequest = localAbortRef.current
+    if (localRequest && localRequest.sessionID === activeSessionID && localRequest.directory === activeDirectory) {
+      localRequest.controller.abort()
+      localAbortRef.current = null
+      return
+    }
     await abortSession(activeSessionID, activeDirectory)
   }, [activeDirectory, activeSessionID])
 
-  return { busy, handleSend, handleAbort }
+  const handleCommand = useCallback(
+    async (command: string, args: string) => {
+      if (!activeSessionID) throw new Error("请先选择会话")
+      await sendCommand(activeSessionID, command, args, activeDirectory)
+    },
+    [activeDirectory, activeSessionID],
+  )
+
+  return { busy, handleSend, handleCommand, handleAbort }
 }

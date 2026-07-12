@@ -1,0 +1,14 @@
+[Unit]
+Description=Back up MiMo Code WebUI and MiMo state
+Documentation=https://github.com/yaozy2020/mimo-code-webui
+ConditionPathExists=/opt/mimo-code-webui/current/scripts/backup-state.mjs
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/mimo-code-webui/webui.env
+Environment=MIMO_BACKUP_OFFLINE=true
+ExecStart=/usr/bin/flock -n /run/lock/mimo-code-webui-deploy.lock /bin/sh -c '/bin/systemctl stop mimo-code-webui.service && /usr/bin/env node /opt/mimo-code-webui/current/scripts/backup-state.mjs'
+ExecStopPost=/bin/sh -c 'if [ -e /var/lib/mimo-code-webui/backup-status.json ]; then /bin/chgrp mimo-webui /var/lib/mimo-code-webui/backup-status.json; /bin/chmod 0640 /var/lib/mimo-code-webui/backup-status.json; fi; /bin/systemctl start mimo-code-webui.service'
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true

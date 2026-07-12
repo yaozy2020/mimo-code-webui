@@ -8,6 +8,37 @@ import crossSpawn, { spawn } from "cross-spawn"
 import { validateWorkspaceDirectory } from "./workspacePolicy.js"
 
 const sleep = promisify(setTimeout)
+const MAX_PROCESS_LOG_BYTES = 64 * 1024
+
+export function appendProcessLog(current: string, chunk: Buffer | string, limit = MAX_PROCESS_LOG_BYTES) {
+  const next = current + chunk.toString()
+  return next.length > limit ? next.slice(-limit) : next
+}
+
+function waitForProcessExit(process: ChildProcess, timeoutMs = 5000): Promise<boolean> {
+  if (process.exitCode !== null || process.signalCode !== null) return Promise.resolve(true)
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timeout)
+      resolve(true)
+    }
+    const timeout = setTimeout(() => {
+      process.off("exit", done)
+      process.off("close", done)
+      resolve(false)
+    }, timeoutMs)
+    process.once("exit", done)
+    process.once("close", done)
+  })
+}
+
+async function terminateProcess(process: ChildProcess) {
+  if (process.exitCode !== null || process.signalCode !== null) return
+  process.kill("SIGTERM")
+  if (await waitForProcessExit(process)) return
+  process.kill("SIGKILL")
+  await waitForProcessExit(process)
+}
 
 export interface MimoServerInfo {
   url: string
@@ -25,8 +56,10 @@ interface ManagedMimoInstance extends MimoServerInfo {
 
 const managedInstances = new Map<string, ManagedMimoInstance>()
 const pendingInstances = new Map<string, Promise<MimoServerInfo>>()
+const startingProcesses = new Map<string, ChildProcess>()
 const reservedManagedPorts = new Set<number>()
 let nextManagedPort = 0
+let stoppingManagedServers = false
 
 function isPortAvailable(port: number, host: string): Promise<boolean> {
   return new Promise((resolve) => {
@@ -141,10 +174,10 @@ export async function runMimoPrompt(input: { model: string; prompt: string }): P
     }, 120000)
 
     proc.stdout?.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString()
+      stdout = appendProcessLog(stdout, chunk)
     })
     proc.stderr?.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString()
+      stderr = appendProcessLog(stderr, chunk)
     })
     proc.on("error", (error) => {
       clearTimeout(timer)
@@ -254,7 +287,7 @@ export async function startMimoServer(hostname = "127.0.0.1", port = 4096, works
 
     let buffer = ""
     proc.stdout?.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString()
+      stdout = appendProcessLog(stdout, chunk)
       buffer += chunk.toString()
       const lines = buffer.split("\n")
       buffer = lines.pop() ?? ""
@@ -277,7 +310,7 @@ export async function startMimoServer(hostname = "127.0.0.1", port = 4096, works
     })
 
     proc.stderr?.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString()
+      stderr = appendProcessLog(stderr, chunk)
       console.error(`[mimo stderr] ${chunk.toString().trim()}`)
     })
 
@@ -300,6 +333,7 @@ export async function startMimoServer(hostname = "127.0.0.1", port = 4096, works
 }
 
 export async function ensureMimoServerForDirectory(hostname: string, preferredPort: number, directory: string, workspaceRoot = process.cwd()): Promise<MimoServerInfo> {
+  if (stoppingManagedServers) throw new Error("MiMo servers are stopping")
   const normalized = validateWorkspaceDirectory(directory, workspaceRoot)
 
   const existing = managedInstances.get(normalized)
@@ -338,6 +372,7 @@ async function startDetachedMimoServer(hostname: string, port: number, directory
       stdio: ["ignore", "pipe", "pipe"],
       env: process.env,
     })
+    startingProcesses.set(directory, proc)
 
     let stdout = ""
     let stderr = ""
@@ -351,7 +386,7 @@ async function startDetachedMimoServer(hostname: string, port: number, directory
 
     let buffer = ""
     proc.stdout?.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString()
+      stdout = appendProcessLog(stdout, chunk)
       buffer += chunk.toString()
       const lines = buffer.split("\n")
       buffer = lines.pop() ?? ""
@@ -373,16 +408,18 @@ async function startDetachedMimoServer(hostname: string, port: number, directory
     })
 
     proc.stderr?.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString()
+      stderr = appendProcessLog(stderr, chunk)
       console.error(`[mimo:${port} stderr] ${chunk.toString().trim()}`)
     })
 
     proc.on("error", (error) => {
       clearTimeout(timeout)
+      startingProcesses.delete(directory)
       if (!resolved) reject(error)
     })
 
     proc.on("exit", (code) => {
+      startingProcesses.delete(directory)
       managedInstances.delete(directory)
       reservedManagedPorts.delete(port)
       clearTimeout(timeout)
@@ -402,27 +439,23 @@ export function listManagedMimoServers(): Array<Omit<ManagedMimoInstance, "proce
 
 export async function stopMimoServer(): Promise<void> {
   if (!activeProcess) return
-
-  activeProcess.kill("SIGTERM")
-  let waited = 0
-  while (!activeProcess.killed && waited < 5000) {
-    await sleep(100)
-    waited += 100
-  }
-  if (!activeProcess.killed) {
-    activeProcess.kill("SIGKILL")
-  }
+  const process = activeProcess
+  await terminateProcess(process)
+  if (activeProcess !== process) return
   activeProcess = null
   activePort = null
 }
 
 export async function stopManagedMimoServers(): Promise<void> {
-  for (const instance of managedInstances.values()) {
-    instance.process.kill("SIGTERM")
-  }
+  stoppingManagedServers = true
+  const instances = Array.from(managedInstances.values())
+  const processes = new Set([...instances.map((instance) => instance.process), ...startingProcesses.values()])
+  await Promise.all(Array.from(processes, (process) => terminateProcess(process)))
   managedInstances.clear()
+  startingProcesses.clear()
   pendingInstances.clear()
   reservedManagedPorts.clear()
+  stoppingManagedServers = false
 }
 
 export async function checkHealth(url: string): Promise<{ healthy: boolean; version?: string }> {

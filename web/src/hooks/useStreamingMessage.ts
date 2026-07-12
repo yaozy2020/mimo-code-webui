@@ -1,5 +1,7 @@
 import { AuthRequiredError, createEventStream } from "@/api/client"
 import { getRecentMessages, getTodos } from "@/api/session"
+import { getSessionDiff } from "@/api/session"
+import { listPermissions, listQuestions } from "@/api/message"
 import type { Message, PermissionRequest, QuestionRequest, SnapshotFileDiff, StreamEvent } from "@/types"
 import { useAppDispatch, useAppState } from "@/stores/appStore"
 import { useEffect, useRef } from "react"
@@ -12,6 +14,7 @@ export function useStreamingMessage() {
   const activeSessionRef = useRef<string | null>(activeSessionID)
   const activeDirectoryRef = useRef<string | undefined>(activeDirectory)
   const agentStatusRef = useRef(agentStatus)
+  const syncGenerationRef = useRef(0)
 
   useEffect(() => {
     activeSessionRef.current = activeSessionID
@@ -41,15 +44,63 @@ export function useStreamingMessage() {
         console.error("[streaming] error:", error)
       },
       activeDirectory,
+      () => {
+        const sessionID = activeSessionRef.current
+        const directory = activeDirectoryRef.current
+        const generation = ++syncGenerationRef.current
+        if (sessionID) syncAuthoritativeSnapshot(sessionID, directory, dispatch, abort.signal, () => activeSessionRef.current === sessionID && activeDirectoryRef.current === directory && syncGenerationRef.current === generation)
+      },
     )
 
+    const handleVisibility = () => {
+      const sessionID = activeSessionRef.current
+      if (document.visibilityState === "visible" && sessionID) {
+        const directory = activeDirectoryRef.current
+        const generation = ++syncGenerationRef.current
+        syncAuthoritativeSnapshot(sessionID, directory, dispatch, abort.signal, () => activeSessionRef.current === sessionID && activeDirectoryRef.current === directory && syncGenerationRef.current === generation)
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibility)
+
     return () => {
+      document.removeEventListener("visibilitychange", handleVisibility)
       abort.abort()
     }
   }, [activeDirectory, dispatch])
 
   return {
     disconnect: () => abortRef.current?.abort(),
+  }
+}
+
+async function syncAuthoritativeSnapshot(
+  sessionID: string,
+  directory: string | undefined,
+  dispatch: ReturnType<typeof useAppDispatch>,
+  signal: AbortSignal,
+  isCurrent: () => boolean,
+) {
+  try {
+    const [messages, todos, permissions, questions] = await Promise.all([
+      getRecentMessages(sessionID, directory),
+      getTodos(sessionID, directory),
+      listPermissions(directory),
+      listQuestions(directory),
+    ])
+    if (signal.aborted || !isCurrent()) return
+    dispatch({ type: "SET_MESSAGES", sessionID, messages })
+    dispatch({ type: "SET_TODOS", sessionID, todos })
+    dispatch({ type: "SET_PENDING_PERMISSIONS", permissions })
+    dispatch({ type: "SET_PENDING_QUESTIONS", questions })
+    const latestUserMessage = [...messages].reverse().find((message) => message.role === "user")
+    if (latestUserMessage) {
+      const diff = await getSessionDiff(sessionID, latestUserMessage.id, directory)
+      if (!signal.aborted && isCurrent()) dispatch({ type: "SET_SESSION_DIFF", sessionID, diff })
+    } else if (isCurrent()) {
+      dispatch({ type: "SET_SESSION_DIFF", sessionID, diff: [] })
+    }
+  } catch (error) {
+    if (!signal.aborted) console.error("[streaming] failed to reconcile authoritative snapshot:", error)
   }
 }
 
@@ -129,11 +180,13 @@ function handleEvent(event: StreamEvent, dispatch: ReturnType<typeof useAppDispa
         info?: { state?: string }
         status?: { state?: string; type?: string }
       }
-      const state = props.status?.state ?? props.status?.type ?? props.info?.state ?? "idle"
+      const state = props.status?.state ?? props.status?.type ?? props.info?.state
+      const mappedState = state ? mapAgentState(state) : undefined
+      if (!mappedState) break
       dispatch({
         type: "SET_AGENT_STATUS",
         sessionID: props.sessionID,
-        status: { sessionID: props.sessionID, state: mapAgentState(state) },
+        status: { sessionID: props.sessionID, state: mappedState },
       })
       break
     }
@@ -223,9 +276,10 @@ function handleEvent(event: StreamEvent, dispatch: ReturnType<typeof useAppDispa
   }
 }
 
-function mapAgentState(state: string): "idle" | "busy" | "waiting_for_permission" | "waiting_for_question" {
+function mapAgentState(state: string): "idle" | "busy" | "waiting_for_permission" | "waiting_for_question" | undefined {
+  if (state === "idle") return "idle"
   if (state === "busy" || state === "running") return "busy"
   if (state === "waiting_for_permission") return "waiting_for_permission"
   if (state === "waiting_for_question") return "waiting_for_question"
-  return "idle"
+  return undefined
 }
