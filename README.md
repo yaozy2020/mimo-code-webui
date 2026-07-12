@@ -7,7 +7,7 @@ Cross-platform web UI for [MiMo-Code](https://github.com/XiaomiMiMo/MiMo-Code).
 - KimiCode-style single-chat interface: open the page and start typing
 - Streaming responses
 - Tool permission / question confirmation dialogs
-- Multimodal and web-search modes from the input bar
+- Build, plan, and compose agent modes from the input bar
 - Settings and diagnostics
 - Runs on Linux and Windows
 - Optional Bearer token authentication
@@ -36,6 +36,20 @@ sudo ./deploy/mimo-code-webui install \
 ```
 
 The installer asks whether to use localhost behind Nginx/Caddy/SSH or direct authenticated LAN access. It creates the service user, generates a random token, configures systemd, starts the service, and verifies WebUI and MiMo health.
+
+The project public key is available at `deploy/keys/mimo-code-webui-release.pub`. Verify its SHA-256 fingerprint through an independent channel before trusting it:
+
+```text
+4e49ece0fe7f28708821437dd1268e425bca81b2418ea8fd195cce74fe5b43f8
+```
+
+You can verify a downloaded archive without installing it:
+
+```bash
+sudo ./deploy/mimo-code-webui verify-archive \
+  --archive ./mimo-code-webui-v0.1.0.tar.gz \
+  --public-key ./deploy/keys/mimo-code-webui-release.pub
+```
 
 For unattended installation:
 
@@ -161,13 +175,27 @@ The WebUI backend is the only supported supervisor for `mimo serve`. Do not run 
 
 ## Operations
 
-See `docs/operations.md` for runtime requirements, config paths, ports, and runtime notes.
+Production safeguards include:
+
+- Ed25519 publisher signatures, outer SHA-256 verification, and an inner file manifest
+- Offline backups before release changes, shared deployment locking, and verified retention pruning
+- Immutable releases, health-based automatic rollback, and explicit rollback
+- Authenticated operational status while keeping the public health endpoint minimal
+- systemd `OnFailure` Webhook alerts for the main and scheduled backup services
+- Fixed-memory streaming hashes for large backup files
+
+The default backup retention is seven verified snapshots. Plan non-compressed backup capacity using `(retention + 2) × protected data size`.
+
+See `docs/operations.md` for runtime requirements, restore drills, alert configuration, capacity guidance, ports, and release gates.
 
 See `docs/deployment.md` for non-Docker production deployment with systemd and optional Nginx or Caddy reverse proxy.
 
 Example deployment files live under `deploy/`:
 
 - `deploy/systemd/mimo-code-webui.service`
+- `deploy/systemd/mimo-code-webui-backup.service`
+- `deploy/systemd/mimo-code-webui-backup.timer`
+- `deploy/systemd/mimo-code-webui-alert@.service`
 - `deploy/nginx/mimo-code-webui.conf`
 - `deploy/caddy/Caddyfile`
 
