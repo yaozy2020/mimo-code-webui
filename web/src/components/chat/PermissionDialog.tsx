@@ -97,9 +97,9 @@ export function PermissionDialog() {
   }
 
   return (
-    <Dialog open={true} onOpenChange={() => handleRespond("reject")}>
+    <Dialog open={true} onOpenChange={() => handleRespond("reject")} contentClassName="text-foreground">
       <DialogHeader>
-        <DialogTitle>代理权限请求</DialogTitle>
+        <DialogTitle className="text-foreground">代理权限请求</DialogTitle>
         <DialogDescription>允许 MiMo Code 继续前，请先确认这次工具调用。</DialogDescription>
       </DialogHeader>
 
@@ -115,7 +115,7 @@ export function PermissionDialog() {
             <p className="mt-1 text-sm text-muted-foreground">{pendingPermission.description}</p>
           )}
           <p className="mt-2 text-xs text-muted-foreground">快捷键：1 允许一次，2 本会话允许，3 拒绝，4 反馈原因。</p>
-          <pre className="mt-2 max-h-40 overflow-auto rounded bg-muted p-2 text-xs">
+          <pre className="mt-2 max-h-40 overflow-auto rounded bg-muted p-2 text-xs text-foreground">
             {JSON.stringify(permissionDetails, null, 2)}
           </pre>
           {error && <p className="mt-2 text-xs text-destructive">授权提交失败：{error}</p>}
@@ -134,17 +134,18 @@ export function PermissionDialog() {
       )}
 
       <DialogFooter className="gap-2">
-        <Button variant="default" onClick={() => handleRespond("once")} disabled={submitting}>
+        <Button variant="default" className="text-primary-foreground" onClick={() => handleRespond("once")} disabled={submitting}>
           {submitting ? "提交中..." : "1. 允许一次"}
         </Button>
-        <Button variant="secondary" onClick={() => handleRespond("always")} disabled={submitting}>
+        <Button variant="secondary" className="text-secondary-foreground" onClick={() => handleRespond("always")} disabled={submitting}>
           2. 本会话允许
         </Button>
-        <Button variant="outline" onClick={() => handleRespond("reject")} disabled={submitting}>
+        <Button variant="outline" className="text-foreground" onClick={() => handleRespond("reject")} disabled={submitting}>
           3. 拒绝
         </Button>
         <Button
           variant="outline"
+          className="text-foreground"
           disabled={submitting}
           onClick={() => {
             if (mode === "feedback") {

@@ -42,6 +42,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
     apiKey: "",
     tool_call: true,
     attachment: true,
+    image_input: true,
     reasoning: true,
     writeBackend: true,
   })
@@ -173,14 +174,18 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
             <Input value={manualModel.baseUrl} onChange={(e) => setManualModel({ ...manualModel, baseUrl: e.target.value })} placeholder="基础 URL，如 https://api.openai.com/v1" />
             <Input type="password" value={manualModel.apiKey} onChange={(e) => setManualModel({ ...manualModel, apiKey: e.target.value })} placeholder="API Key（写入后端配置时可选）" className="md:col-span-2" />
           </div>
-          <div className="mt-3 grid gap-2 md:grid-cols-3">
+          <div className="mt-3 grid gap-2 md:grid-cols-2">
             <label className={toggleRowClassName(manualModel.tool_call)}>
               <span>工具/工作区</span>
               <Switch checked={manualModel.tool_call} onChange={(e) => setManualModel({ ...manualModel, tool_call: e.target.checked })} />
             </label>
             <label className={toggleRowClassName(manualModel.attachment)}>
-              <span>附件</span>
+              <span>文件附件</span>
               <Switch checked={manualModel.attachment} onChange={(e) => setManualModel({ ...manualModel, attachment: e.target.checked })} />
+            </label>
+            <label className={toggleRowClassName(manualModel.image_input)}>
+              <span>图片输入</span>
+              <Switch checked={manualModel.image_input} onChange={(e) => setManualModel({ ...manualModel, image_input: e.target.checked })} />
             </label>
             <label className={toggleRowClassName(manualModel.reasoning)}>
               <span>多步推理</span>

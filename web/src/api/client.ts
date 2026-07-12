@@ -214,6 +214,7 @@ export interface RuntimeModel {
   source?: "template" | "runtime" | "backend" | "browser"
   tool_call?: boolean
   attachment?: boolean
+  image_input?: boolean
   reasoning?: boolean
 }
 
@@ -234,11 +235,11 @@ export async function fetchRuntimeModels(): Promise<RuntimeModel[]> {
 }
 
 interface LocalConfigModelsResponse {
-  models?: Array<{ providerID: string; modelID: string; name?: string; baseUrl?: string; tool_call?: boolean; attachment?: boolean; reasoning?: boolean }>
+  models?: Array<{ providerID: string; modelID: string; name?: string; baseUrl?: string; tool_call?: boolean; attachment?: boolean; image_input?: boolean; reasoning?: boolean }>
 }
 
 interface LocalConfigModelResponse {
-  model: { providerID: string; modelID: string; name: string; baseUrl?: string; tool_call?: boolean; attachment?: boolean; reasoning?: boolean }
+  model: { providerID: string; modelID: string; name: string; baseUrl?: string; tool_call?: boolean; attachment?: boolean; image_input?: boolean; reasoning?: boolean }
 }
 
 const MANUAL_MODELS_KEY = "mimo-webui-manual-models"
@@ -251,6 +252,7 @@ export interface ManualModelInput {
   apiKey?: string
   tool_call?: boolean
   attachment?: boolean
+  image_input?: boolean
   reasoning?: boolean
 }
 
@@ -273,6 +275,7 @@ function writeBrowserModel(input: ManualModelInput): RuntimeModel {
     baseUrl: input.baseUrl?.trim(),
     tool_call: input.tool_call ?? true,
     attachment: input.attachment ?? true,
+    image_input: input.image_input ?? true,
     reasoning: input.reasoning ?? true,
     source: "browser",
   }
@@ -292,6 +295,7 @@ export async function fetchBackendModels(): Promise<RuntimeModel[]> {
     baseUrl: model.baseUrl,
     tool_call: model.tool_call,
     attachment: model.attachment,
+    image_input: model.image_input,
     reasoning: model.reasoning,
     source: "backend",
   }))

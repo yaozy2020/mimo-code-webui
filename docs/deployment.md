@@ -21,7 +21,7 @@ Extract the release archive and run its installer:
 
 ```bash
 sudo ./deploy/mimo-code-webui install \
-  --archive ./mimo-code-webui-v0.1.0.tar.gz \
+  --archive ./mimo-code-webui-v0.1.1.tar.gz \
   --public-key /etc/mimo-code-webui-release.pub
 ```
 
@@ -56,7 +56,7 @@ Localhost/reverse-proxy mode:
 ```bash
 sudo ./deploy/mimo-code-webui install \
   --non-interactive --yes \
-  --archive ./mimo-code-webui-v0.1.0.tar.gz \
+  --archive ./mimo-code-webui-v0.1.1.tar.gz \
   --public-key /etc/mimo-code-webui-release.pub \
   --mode reverse-proxy
 ```
@@ -66,7 +66,7 @@ Direct LAN mode:
 ```bash
 sudo ./deploy/mimo-code-webui install \
   --non-interactive --yes \
-  --archive ./mimo-code-webui-v0.1.0.tar.gz \
+  --archive ./mimo-code-webui-v0.1.1.tar.gz \
   --public-key /etc/mimo-code-webui-release.pub \
   --mode lan \
   --port 8090 \

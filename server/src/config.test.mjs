@@ -29,6 +29,32 @@ try {
   assert.equal(result.attachment, false, "returned summary should include persisted attachment")
   assert.equal(result.reasoning, true, "returned summary should include persisted reasoning")
 
+  fs.writeFileSync(
+    configPath,
+    JSON.stringify({
+      provider: {
+        libwrt: {
+          options: { baseURL: "https://api.example.com/v1" },
+          models: { existing: { name: "Existing" } },
+        },
+      },
+    }),
+    "utf-8",
+  )
+  const terra = addMimoModelConfig({
+    providerID: "libwrt",
+    modelID: "gpt-5.6-terra",
+    image_input: true,
+  })
+  const terraConfig = JSON.parse(fs.readFileSync(configPath, "utf-8")).provider.libwrt.models["gpt-5.6-terra"]
+  assert.equal(terra.baseUrl, "https://api.example.com/v1", "existing provider options.baseURL should be reused")
+  assert.equal(terra.image_input, true)
+  assert.deepEqual(terraConfig.modalities, { input: ["text", "image"], output: ["text"] })
+
+  addMimoModelConfig({ providerID: "libwrt", modelID: "text-only", image_input: false })
+  const textOnly = JSON.parse(fs.readFileSync(configPath, "utf-8")).provider.libwrt.models["text-only"]
+  assert.deepEqual(textOnly.modalities.input, ["text"], "disabled image input should persist text-only modalities")
+
   assert.throws(
     () =>
       addMimoModelConfig({

@@ -1,6 +1,6 @@
 {
   "name": "mimo-code-webui",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Cross-platform web UI for MiMo-Code",
   "type": "module",
   "private": true,
@@ -10,7 +10,7 @@
   ],
   "scripts": {
     "dev": "concurrently \"npm run dev -w server\" \"npm run dev -w web\"",
-    "preverify": "node scripts/backup-state.test.mjs && node scripts/send-alert.test.mjs && node web/src/components/ui/dialogText.test.mjs && node web/src/components/chat/localRunSafety.test.mjs && node --import tsx web/src/api/sseParser.test.mjs && node --import tsx server/src/proxy.test.mjs && node --import tsx server/src/localRunDisconnect.test.mjs",
+    "preverify": "node scripts/backup-state.test.mjs && node scripts/send-alert.test.mjs && node web/src/components/ui/dialogText.test.mjs && node web/src/components/chat/localRunSafety.test.mjs && node web/src/components/settings/manualModelCapabilities.test.mjs && node --import tsx web/src/api/sseParser.test.mjs && node --import tsx server/src/proxy.test.mjs && node --import tsx server/src/localRunDisconnect.test.mjs",
     "build": "npm run build -w web && npm run build -w server",
     "start": "npm start -w server",
     "typecheck": "npm run typecheck -w server && npm run typecheck -w web",
@@ -19,6 +19,7 @@
     "smoke:browser:install": "PLAYWRIGHT_BROWSERS_PATH=.playwright-browsers playwright install chromium",
     "smoke:browser": "node scripts/browser-smoke.mjs",
     "smoke:browser:cancel": "node scripts/browser-cancellation-smoke.mjs",
+    "smoke:browser:permission": "node scripts/browser-permission-visibility-smoke.mjs",
     "smoke:browser:reconcile": "node scripts/browser-reconciliation-smoke.mjs",
     "smoke:browser:system": "node scripts/system-chromium-smoke.mjs",
     "smoke:model-runtime": "node scripts/model-runtime-smoke.mjs",

@@ -31,7 +31,7 @@ Extract the release package, then run:
 
 ```bash
 sudo ./deploy/mimo-code-webui install \
-  --archive ./mimo-code-webui-v0.1.0.tar.gz \
+  --archive ./mimo-code-webui-v0.1.1.tar.gz \
   --public-key /etc/mimo-code-webui-release.pub
 ```
 
@@ -47,7 +47,7 @@ You can verify a downloaded archive without installing it:
 
 ```bash
 sudo ./deploy/mimo-code-webui verify-archive \
-  --archive ./mimo-code-webui-v0.1.0.tar.gz \
+  --archive ./mimo-code-webui-v0.1.1.tar.gz \
   --public-key ./deploy/keys/mimo-code-webui-release.pub
 ```
 
@@ -56,7 +56,7 @@ For unattended installation:
 ```bash
 sudo ./deploy/mimo-code-webui install \
   --non-interactive --yes \
-  --archive ./mimo-code-webui-v0.1.0.tar.gz \
+  --archive ./mimo-code-webui-v0.1.1.tar.gz \
   --public-key /etc/mimo-code-webui-release.pub \
   --mode reverse-proxy
 ```

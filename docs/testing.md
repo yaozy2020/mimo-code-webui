@@ -10,12 +10,15 @@ Optional browser smoke checks require a running WebUI:
 
 ```bash
 npm run smoke:browser
+npm run smoke:browser:permission
 npm run smoke:browser:system
 ```
 
 Browser smoke scripts are runtime diagnostics, not the primary regression suite.
 
 The browser smoke check verifies that the app shell, start screen, or auth prompt renders without browser console errors. Set `SMOKE_AUTH_TOKEN` for an authenticated deployment; the smoke logs in through the HttpOnly cookie endpoint before loading the page. `SMOKE_SESSION_ID` is reserved for a future URL-addressable session regression; current builds log a warning and skip that assertion because sessions are selected through app state rather than a stable route.
+
+The permission visibility smoke injects a deterministic authorization request and checks computed text/background contrast for the title, description, and all four actions in light and dark themes at a mobile viewport.
 
 ## Release Verification
 

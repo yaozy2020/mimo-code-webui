@@ -24,6 +24,7 @@ export interface MimoProviderConfig {
 export interface MimoModelConfig {
   name?: string
   attachment?: boolean
+  image_input?: boolean
   reasoning?: boolean
   tool_call?: boolean
   temperature?: boolean
@@ -42,6 +43,7 @@ export interface ManualModelInput {
   apiKey?: string
   tool_call?: boolean
   attachment?: boolean
+  image_input?: boolean
   reasoning?: boolean
 }
 
@@ -52,6 +54,7 @@ export interface ManualModelSummary {
   baseUrl?: string
   tool_call?: boolean
   attachment?: boolean
+  image_input?: boolean
   reasoning?: boolean
 }
 
@@ -189,6 +192,7 @@ export function listManualModels(): ManualModelSummary[] {
       // Manual/backend models are presumed to support workspace tools unless explicitly disabled.
       tool_call: model.tool_call ?? true,
       attachment: model.attachment ?? true,
+      image_input: model.modalities?.input?.includes("image") ?? model.attachment ?? true,
       reasoning: model.reasoning ?? true,
     })),
   )
@@ -225,8 +229,12 @@ export function addMimoModelConfig(input: ManualModelInput): ManualModelSummary 
   const provider = config.provider?.[providerID] ?? {}
   const models = provider.models ?? {}
   const name = input.name?.trim() || modelID
-  const baseUrl = input.baseUrl?.trim() || provider.api
+  const providerBaseUrl = provider.api ||
+    (typeof provider.options?.baseURL === "string" ? provider.options.baseURL : undefined) ||
+    (typeof provider.options?.baseUrl === "string" ? provider.options.baseUrl : undefined)
+  const baseUrl = input.baseUrl?.trim() || providerBaseUrl
   const apiKey = input.apiKey?.trim()
+  const imageInput = input.image_input ?? models[modelID]?.modalities?.input?.includes("image") ?? true
 
   if (!baseUrl) {
     throw new Error("baseUrl is required for a new provider")
@@ -249,10 +257,13 @@ export function addMimoModelConfig(input: ManualModelInput): ManualModelSummary 
             ...models[modelID],
             name,
             attachment: input.attachment ?? models[modelID]?.attachment ?? true,
+            modalities: {
+              input: imageInput ? ["text", "image"] : ["text"],
+              output: models[modelID]?.modalities?.output ?? ["text"],
+            },
             reasoning: input.reasoning ?? models[modelID]?.reasoning ?? true,
             tool_call: input.tool_call ?? models[modelID]?.tool_call ?? true,
             temperature: models[modelID]?.temperature ?? true,
-            modalities: models[modelID]?.modalities ?? { input: ["text", "image"], output: ["text"] },
           },
         },
       },
@@ -268,6 +279,7 @@ export function addMimoModelConfig(input: ManualModelInput): ManualModelSummary 
     baseUrl: safeBaseUrl,
     tool_call: input.tool_call ?? models[modelID]?.tool_call ?? true,
     attachment: input.attachment ?? models[modelID]?.attachment ?? true,
+    image_input: imageInput,
     reasoning: input.reasoning ?? models[modelID]?.reasoning ?? true,
   }
 }
