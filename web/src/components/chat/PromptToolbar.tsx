@@ -26,6 +26,7 @@ interface PromptToolbarProps {
 export function PromptToolbar({ sessionID, onOpenFileChanges }: PromptToolbarProps) {
   const { agentStatus, attachedSessionIDs, contextUsage, currentWorkspace, gitStatus, ownedSessionIDs, sessionDiffs, sessions, todos } = useAppState()
   const [todoExpanded, setTodoExpanded] = useState(false)
+  const [fileDetailsExpanded, setFileDetailsExpanded] = useState(false)
   const status = agentStatus[sessionID]
   const statusState = status?.state ?? "idle"
   const usage = contextUsage[sessionID]
@@ -74,10 +75,24 @@ export function PromptToolbar({ sessionID, onOpenFileChanges }: PromptToolbarPro
           </button>
         )}
         {diffList.length > 0 && (
-          <button type="button" onClick={onOpenFileChanges} disabled={!onOpenFileChanges}>
+          <button type="button" onClick={onOpenFileChanges} disabled={!onOpenFileChanges} className="hidden sm:block">
             <Badge variant="outline" className="shrink-0 gap-1 hover:bg-muted text-[10px]">
             <GitBranch className="h-3 w-3" />
             变更 {diffList.length} 文件 +{additions} -{deletions}
+            </Badge>
+          </button>
+        )}
+        {diffList.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setFileDetailsExpanded((expanded) => !expanded)}
+            className="sm:hidden"
+            aria-expanded={fileDetailsExpanded}
+            aria-controls="mobile-file-details"
+          >
+            <Badge variant={fileDetailsExpanded ? "default" : "outline"} className="shrink-0 gap-1 text-[10px]">
+              {fileDetailsExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+              变更 {diffList.length} 文件
             </Badge>
           </button>
         )}
@@ -102,7 +117,10 @@ export function PromptToolbar({ sessionID, onOpenFileChanges }: PromptToolbarPro
         </div>
       )}
       {diffList.length > 0 && (
-        <div className={promptToolbarDiffRowClassName}>
+        <div
+          id="mobile-file-details"
+          className={`${promptToolbarDiffRowClassName} ${fileDetailsExpanded ? "flex" : "hidden"} sm:flex`}
+        >
           {diffList.slice(0, 5).map((diff) => (
             <button
               key={diff.file}
