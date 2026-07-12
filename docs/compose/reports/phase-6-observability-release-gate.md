@@ -14,7 +14,7 @@
 
 - Run the full deployment matrix on a clean Ubuntu 24.04 VM.
 - Confirm the browser reconciliation and cancellation paths once against a real provider session in the target deployment without using a production conversation.
-- Establish an independently distributed release signing key and require signature verification before installation or upgrade.
+- Generate and independently distribute the production signing key; the code now requires Ed25519 verification before installation or upgrade and tests forged signatures.
 - Calibrate backup capacity, retention, and restore objectives with production-sized data.
 - Keep 5.6 background actor workflows disabled until the documented delivery test passes twice consecutively.
 

@@ -21,7 +21,9 @@ The browser smoke check verifies that the app shell, start screen, or auth promp
 
 Production packaging requires a clean Git worktree. Local development may exercise the packager with `RELEASE_ALLOW_DIRTY=true`, but those artifacts are not releasable.
 
-Every release contains `release-manifest.json` with the Git commit, tool versions, lockfile digest, and per-file digests. The installer verifies the manifest after extraction. The outer `.sha256` detects corruption; release-source authentication additionally requires a project-controlled signing key and is a release gate, not something generated ad hoc on a deployment host.
+Every release contains `release-manifest.json` with the Git commit, tool versions, lockfile digest, and per-file digests. The installer verifies the detached Ed25519 signature before any deployment mutation, checks the outer `.sha256`, then verifies the manifest after extraction. The signing private key must remain outside the repository and deployment hosts; distribute the public key independently from release artifacts.
+
+Generate an offline signing key once with `openssl genpkey -algorithm ED25519 -out release.key`, restrict it to mode `0600`, and derive the independently distributed public key with `openssl pkey -in release.key -pubout -out release.pub`. Produce a signed artifact with `RELEASE_SIGNING_KEY=/secure/path/release.key npm run package:release`. Set `VERIFY_RELEASE_SIGNING_KEY` when running `scripts/verify-release.sh` to exercise packaging and signature verification in the release gate.
 
 Against a running production build, run `SMOKE_URL=http://127.0.0.1:8090/ npm run smoke:browser:reconcile`. This deterministic browser contract smoke verifies that an SSE EOF reconnect and a visible-page restoration both reload messages, todos, pending permissions, and pending questions before updating the rendered session.
 

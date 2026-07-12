@@ -7,7 +7,9 @@ The supported production path is the release-package installer on Linux with sys
 - Linux with systemd and root/sudo access
 - Node.js 18+ and npm
 - MiMo-Code CLI available as `mimo` on `PATH`
-- Release archive plus the generated `.sha256` sidecar
+- Release archive plus the generated `.sha256` and `.sig` sidecars
+- A trusted Ed25519 public key obtained independently from the release archive
+- OpenSSL 3.x for signature verification
 
 The installer does not install Node.js, MiMo-Code, Nginx, or Caddy.
 
@@ -17,7 +19,8 @@ Extract the release archive and run its installer:
 
 ```bash
 sudo ./deploy/mimo-code-webui install \
-  --archive ./mimo-code-webui-v0.1.0.tar.gz
+  --archive ./mimo-code-webui-v0.1.0.tar.gz \
+  --public-key /etc/mimo-code-webui-release.pub
 ```
 
 The installer asks you to choose:
@@ -52,6 +55,7 @@ Localhost/reverse-proxy mode:
 sudo ./deploy/mimo-code-webui install \
   --non-interactive --yes \
   --archive ./mimo-code-webui-v0.1.0.tar.gz \
+  --public-key /etc/mimo-code-webui-release.pub \
   --mode reverse-proxy
 ```
 
@@ -61,12 +65,13 @@ Direct LAN mode:
 sudo ./deploy/mimo-code-webui install \
   --non-interactive --yes \
   --archive ./mimo-code-webui-v0.1.0.tar.gz \
+  --public-key /etc/mimo-code-webui-release.pub \
   --mode lan \
   --port 8090 \
   --workspace-root /srv/mimo-code-workspaces
 ```
 
-Useful options include `--checksum PATH`, `--sha256 HEX`, `--auth-token TOKEN`, `--mimo-config PATH`, `--mimo-serve-cwd PATH`, `--health-timeout SECONDS`, and `--keep-releases COUNT`. Non-interactive mode never reads stdin and fails when required values are absent.
+`--public-key` is mandatory. The installer verifies the detached Ed25519 signature before stopping services, creating an upgrade backup, extracting files, or switching releases. Useful options include `--signature PATH`, `--checksum PATH`, `--sha256 HEX`, `--auth-token TOKEN`, `--mimo-config PATH`, `--mimo-serve-cwd PATH`, `--health-timeout SECONDS`, and `--keep-releases COUNT`. Non-interactive mode never reads stdin and fails when required values are absent.
 
 ## Status And Logs
 
@@ -84,7 +89,8 @@ Run the installer from the newly extracted release:
 
 ```bash
 sudo ./deploy/mimo-code-webui upgrade \
-  --archive ./mimo-code-webui-v0.1.1.tar.gz
+  --archive ./mimo-code-webui-v0.1.1.tar.gz \
+  --public-key /etc/mimo-code-webui-release.pub
 ```
 
 The existing `/etc/mimo-code-webui/webui.env` is preserved; upgrade rejects network/configuration flags instead of silently ignoring them. The new release is installed beside the current version, then `current` is switched atomically. If WebUI or MiMo health fails, the old symlink, previous pointer, and systemd unit are restored and verified before the command returns an error.

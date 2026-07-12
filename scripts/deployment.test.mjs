@@ -26,6 +26,8 @@ test("strict startup checks artifacts and dependency resolution", () => {
 test("deployment CLI enforces archive and health safety", () => {
   const script = read("deploy/mimo-code-webui")
   assert.match(script, /checksum sidecar not found/)
+  assert.match(script, /--public-key is required/)
+  assert.match(script, /release signature verification failed/)
   assert.match(script, /unsafe archive member/)
   assert.match(script, /s\.mimo\?\.healthy === true/)
   assert.match(script, /restored previous release/)
@@ -40,6 +42,8 @@ test("release packaging includes installer and checksum", () => {
   assert.match(script, /deploy\/mimo-code-webui/)
   assert.match(script, /sha256sum/)
   assert.match(script, /\.sha256/)
+  assert.match(script, /RELEASE_SIGNING_KEY/)
+  assert.match(script, /pkeyutl/)
   assert.match(script, /release-manifest\.json/)
   assert.match(script, /scripts\/backup-state\.mjs/)
   assert.match(script, /copy\("scripts\/backup-state\.mjs"\)/)

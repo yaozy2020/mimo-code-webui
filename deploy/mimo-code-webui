@@ -23,6 +23,8 @@ PORT=""
 ARCHIVE=""
 CHECKSUM=""
 SHA256=""
+SIGNATURE=""
+PUBLIC_KEY=""
 AUTH_TOKEN=""
 MIMO_CONFIG=""
 MIMO_SERVE_CWD=""
@@ -78,6 +80,8 @@ Install/upgrade options:
   --archive PATH                 Release tarball (required)
   --checksum PATH                sha256sum sidecar (default: PATH.sha256)
   --sha256 HEX                   Expected SHA-256 instead of a sidecar
+  --signature PATH               Detached Ed25519 signature (default: ARCHIVE.sig)
+  --public-key PATH              Trusted Ed25519 public key (required)
   --mode reverse-proxy|lan       Bind to localhost or all interfaces
   --port PORT                    WebUI port (default: 8080 or 8090)
   --auth-token TOKEN             Token to preserve/use; generated when omitted
@@ -130,7 +134,7 @@ require_command() { command -v "$1" >/dev/null || die "$1 is required"; }
 
 check_runtime() {
   local node_major
-  for command in node npm mimo tar sha256sum curl; do require_command "$command"; done
+  for command in node npm mimo tar sha256sum curl openssl; do require_command "$command"; done
   node_major="$(node -p 'Number(process.versions.node.split(".")[0])')"
   [ "$node_major" -ge 18 ] || die "Node.js 18+ is required; found $(node --version)"
   log "node=$(command -v node) ($(node --version))"
@@ -144,6 +148,8 @@ parse_options() {
       --archive) ARCHIVE="${2:?missing value}"; shift 2 ;;
       --checksum) CHECKSUM="${2:?missing value}"; shift 2 ;;
       --sha256) SHA256="${2:?missing value}"; shift 2 ;;
+      --signature) SIGNATURE="${2:?missing value}"; shift 2 ;;
+      --public-key) PUBLIC_KEY="${2:?missing value}"; shift 2 ;;
       --mode) MODE="${2:?missing value}"; SEEN_INSTALL_OPTION=true; shift 2 ;;
       --port) PORT="${2:?missing value}"; SEEN_INSTALL_OPTION=true; shift 2 ;;
       --auth-token) AUTH_TOKEN="${2:?missing value}"; SEEN_INSTALL_OPTION=true; shift 2 ;;
@@ -211,6 +217,12 @@ validate_env_value() {
 
 validate_archive() {
   [ -f "$ARCHIVE" ] || die "release archive not found: $ARCHIVE"
+  [ -n "$PUBLIC_KEY" ] || die "--public-key is required to authenticate the release publisher"
+  [ -f "$PUBLIC_KEY" ] || die "trusted public key not found: $PUBLIC_KEY"
+  SIGNATURE="${SIGNATURE:-$ARCHIVE.sig}"
+  [ -f "$SIGNATURE" ] || die "release signature not found: $SIGNATURE"
+  openssl pkeyutl -verify -pubin -inkey "$PUBLIC_KEY" -rawin -in "$ARCHIVE" -sigfile "$SIGNATURE" >/dev/null 2>&1 \
+    || die "release signature verification failed"
   if [ -n "$SHA256" ]; then
     printf '%s  %s\n' "$SHA256" "$ARCHIVE" | sha256sum -c - >/dev/null || die "checksum mismatch"
   else
@@ -545,6 +557,8 @@ deploy_release() {
   [ -n "$ARCHIVE" ] || die "--archive is required"
   ARCHIVE="$(readlink -f "$ARCHIVE")"
   [ -n "$CHECKSUM" ] && CHECKSUM="$(readlink -f "$CHECKSUM")"
+  [ -n "$SIGNATURE" ] && SIGNATURE="$(readlink -f "$SIGNATURE")"
+  [ -n "$PUBLIC_KEY" ] && PUBLIC_KEY="$(readlink -f "$PUBLIC_KEY")"
   if [ "$action" = "upgrade" ]; then
     [ -f "$CONFIG_FILE" ] || die "upgrade requires an existing installation"
     [ "$SEEN_INSTALL_OPTION" = false ] || die "upgrade preserves runtime configuration; edit $CONFIG_FILE separately"
@@ -633,6 +647,8 @@ verify_archive_only() {
   [ -n "$ARCHIVE" ] || die "--archive is required"
   ARCHIVE="$(readlink -f "$ARCHIVE")"
   [ -n "$CHECKSUM" ] && CHECKSUM="$(readlink -f "$CHECKSUM")"
+  [ -n "$SIGNATURE" ] && SIGNATURE="$(readlink -f "$SIGNATURE")"
+  [ -n "$PUBLIC_KEY" ] && PUBLIC_KEY="$(readlink -f "$PUBLIC_KEY")"
   check_runtime
   validate_archive
   local temp extracted

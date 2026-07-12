@@ -13,6 +13,11 @@ const unit = fs.readFileSync(path.join(root, "deploy/systemd/mimo-code-webui.ser
 const backupServiceUnit = fs.readFileSync(path.join(root, "deploy/systemd/mimo-code-webui-backup.service"))
 const backupTimerUnit = fs.readFileSync(path.join(root, "deploy/systemd/mimo-code-webui-backup.timer"))
 const backupScript = fs.readFileSync(path.join(root, "scripts/backup-state.mjs"))
+const signingDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "mimo-deploy-signing-"))
+const signingKey = path.join(signingDirectory, "release.key")
+const publicKey = path.join(signingDirectory, "release.pub")
+assert.equal(spawnSync("openssl", ["genpkey", "-algorithm", "ED25519", "-out", signingKey]).status, 0)
+assert.equal(spawnSync("openssl", ["pkey", "-in", signingKey, "-pubout", "-out", publicKey]).status, 0)
 
 function sha256(content) {
   return crypto.createHash("sha256").update(content).digest("hex")
@@ -53,16 +58,22 @@ function createRelease(directory, version) {
   const tar = spawnSync("tar", ["-czf", archive, "-C", directory, stageName], { encoding: "utf8" })
   assert.equal(tar.status, 0, tar.stderr)
   fs.writeFileSync(`${archive}.sha256`, `${sha256(fs.readFileSync(archive))}  ${path.basename(archive)}\n`)
+  const sign = spawnSync("openssl", ["pkeyutl", "-sign", "-rawin", "-inkey", signingKey, "-in", archive, "-out", `${archive}.sig`], { encoding: "utf8" })
+  assert.equal(sign.status, 0, sign.stderr)
   return archive
 }
 
 function run(sandbox, args, extraEnv = {}) {
-  return spawnSync(installer, args, {
+  const signedActions = new Set(["install", "upgrade", "verify-archive"])
+  const effectiveArgs = signedActions.has(args[0]) && !args.includes("--public-key") ? [...args, "--public-key", publicKey] : args
+  return spawnSync(installer, effectiveArgs, {
     cwd: root,
     env: { ...process.env, MIMO_DEPLOY_TEST_MODE: "1", MIMO_DEPLOY_TEST_ROOT: sandbox, ...extraEnv },
     encoding: "utf8",
   })
 }
+
+process.on("exit", () => fs.rmSync(signingDirectory, { recursive: true, force: true }))
 
 function currentRelease(sandbox) {
   const link = path.join(sandbox, "opt/mimo-code-webui/current")
@@ -119,6 +130,26 @@ test("sandbox deployment lifecycle is transactional", () => {
     assert.equal(fs.existsSync(path.join(sandbox, "opt/mimo-code-webui")), false)
     assert.equal(fs.existsSync(path.join(sandbox, "etc/mimo-code-webui")), false)
     assert.equal(fs.existsSync(path.join(sandbox, "srv/mimo-code-workspaces")), true)
+  } finally {
+    fs.rmSync(fixture, { recursive: true, force: true })
+    fs.rmSync(sandbox, { recursive: true, force: true })
+  }
+})
+
+test("release signature authenticates the publisher before deployment", () => {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "mimo-deploy-signature-"))
+  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), "mimo-deploy-signature-root-"))
+  try {
+    const release = createRelease(fixture, "1.0.0")
+    const missingKey = run(sandbox, ["verify-archive", "--archive", release, "--public-key", path.join(fixture, "missing.pub")])
+    assert.notEqual(missingKey.status, 0)
+    assert.match(missingKey.stderr, /trusted public key not found/)
+
+    fs.writeFileSync(`${release}.sig`, Buffer.alloc(64))
+    const forged = run(sandbox, ["verify-archive", "--archive", release])
+    assert.notEqual(forged.status, 0)
+    assert.match(forged.stderr, /signature verification failed/)
+    assert.equal(fs.existsSync(path.join(sandbox, "opt/mimo-code-webui")), false)
   } finally {
     fs.rmSync(fixture, { recursive: true, force: true })
     fs.rmSync(sandbox, { recursive: true, force: true })

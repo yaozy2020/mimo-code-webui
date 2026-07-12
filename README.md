@@ -25,13 +25,14 @@ Cross-platform web UI for [MiMo-Code](https://github.com/XiaomiMiMo/MiMo-Code).
 
 - Linux with systemd
 - Node.js 18+, npm, and the MiMo-Code CLI (`mimo`)
-- A release archive and its `.sha256` file
+- A release archive, its `.sha256` and `.sig` files, and the independently distributed trusted Ed25519 public key
 
 Extract the release package, then run:
 
 ```bash
 sudo ./deploy/mimo-code-webui install \
-  --archive ./mimo-code-webui-v0.1.0.tar.gz
+  --archive ./mimo-code-webui-v0.1.0.tar.gz \
+  --public-key /etc/mimo-code-webui-release.pub
 ```
 
 The installer asks whether to use localhost behind Nginx/Caddy/SSH or direct authenticated LAN access. It creates the service user, generates a random token, configures systemd, starts the service, and verifies WebUI and MiMo health.
@@ -42,6 +43,7 @@ For unattended installation:
 sudo ./deploy/mimo-code-webui install \
   --non-interactive --yes \
   --archive ./mimo-code-webui-v0.1.0.tar.gz \
+  --public-key /etc/mimo-code-webui-release.pub \
   --mode reverse-proxy
 ```
 

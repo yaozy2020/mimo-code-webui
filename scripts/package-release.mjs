@@ -10,6 +10,7 @@ const outDir = path.join(root, "dist-release")
 const stage = path.join(outDir, `mimo-code-webui-v${pkg.version}`)
 const archive = path.join(outDir, `mimo-code-webui-v${pkg.version}.tar.gz`)
 const checksum = `${archive}.sha256`
+const signature = `${archive}.sig`
 
 function command(command, args, options = {}) {
   const result = spawnSync(command, args, { cwd: root, encoding: "utf-8", ...options })
@@ -95,6 +96,7 @@ fs.writeFileSync(path.join(stage, "release-manifest.json"), `${JSON.stringify(ma
 
 fs.rmSync(archive, { force: true })
 fs.rmSync(checksum, { force: true })
+fs.rmSync(signature, { force: true })
 const result = spawnSync("tar", [
   "--sort=name",
   `--mtime=@${commitTime}`,
@@ -114,3 +116,12 @@ if (checksumResult.status !== 0) process.exit(checksumResult.status ?? 1)
 fs.writeFileSync(checksum, checksumResult.stdout)
 console.log(`[release] wrote ${archive}`)
 console.log(`[release] wrote ${checksum}`)
+if (process.env.RELEASE_SIGNING_KEY) {
+  const key = path.resolve(process.env.RELEASE_SIGNING_KEY)
+  if (!fs.existsSync(key)) throw new Error(`Release signing key not found: ${key}`)
+  const mode = fs.statSync(key).mode & 0o777
+  if ((mode & 0o077) !== 0) throw new Error(`Release signing key must not be accessible by group or others: ${key}`)
+  const sign = spawnSync("openssl", ["pkeyutl", "-sign", "-rawin", "-inkey", key, "-in", archive, "-out", signature], { stdio: "inherit" })
+  if (sign.status !== 0) process.exit(sign.status ?? 1)
+  console.log(`[release] wrote ${signature}`)
+}
