@@ -31,3 +31,8 @@
 - Protected purge verified the external backup before deleting release/config/state, retained the workspace sentinel, and a clean reinstall enabled both the main service and backup timer.
 - Another healthy upgrade confirmed that the mandatory pre-upgrade backup and old-service recovery occur before candidate release switching; failure injection must therefore target the candidate release identity rather than the next MiMo start globally.
 - The systemd `PrivateTmp=true` boundary also prevented a host-visible `/tmp` failure marker from reaching the service, confirming the intended temporary-directory isolation.
+- Candidate-specific failure injection from the service state directory forced a real upgrade health-check failure. The installer restored the previous `current` release, retained a healthy pre-upgrade backup, kept the backup timer enabled, returned HTTP healthy after the normal startup window, and left exactly one managed MiMo process.
+
+## Ubuntu 24.04 Verdict
+
+The clean install, failed-first-install compensation, required pre-upgrade backup, successful upgrade, candidate failure rollback, explicit rollback, offline backup recovery, full reboot, uninstall, protected purge, workspace retention, and clean reinstall matrix passed on Ubuntu 24.04. Runtime model behavior was intentionally represented by a VM-only MiMo protocol stub; real provider/model compatibility remains a separate gate.
