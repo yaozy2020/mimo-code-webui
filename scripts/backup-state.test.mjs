@@ -73,7 +73,13 @@ try {
   assert.equal(typeof failedStatus.lastSuccessAt, "string")
   assert.equal(fs.readdirSync(backups).filter((name) => !name.startsWith(".")).length, 1)
   assert.equal(fs.readdirSync(backups).some((name) => name.startsWith(".backup-")), false)
+  fs.mkdirSync(path.join(backups, "old-backup"))
+  env.MIMO_BACKUP_KEEP = "1"
   fs.rmSync(path.join(state, "mimocode.db"))
+  const retained = spawnSync(process.execPath, ["scripts/backup-state.mjs"], { cwd: process.cwd(), env, encoding: "utf8" })
+  assert.equal(retained.status, 0, retained.stderr)
+  assert.equal(fs.readdirSync(backups).filter((name) => !name.startsWith(".")).length, 1)
+  delete env.MIMO_BACKUP_KEEP
   fs.symlinkSync("memory.md", path.join(state, "linked-memory"))
   assert.notEqual(spawnSync(process.execPath, ["scripts/backup-state.mjs"], { cwd: process.cwd(), env, encoding: "utf8" }).status, 0)
   assert.equal(fs.readdirSync(backups).some((name) => name.startsWith(".backup-")), false)

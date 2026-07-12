@@ -21,7 +21,8 @@
     "smoke:browser:cancel": "node scripts/browser-cancellation-smoke.mjs",
     "smoke:browser:reconcile": "node scripts/browser-reconciliation-smoke.mjs",
     "smoke:browser:system": "node scripts/system-chromium-smoke.mjs",
-    "smoke:model-runtime": "node scripts/model-runtime-smoke.mjs"
+    "smoke:model-runtime": "node scripts/model-runtime-smoke.mjs",
+    "benchmark:backup": "node scripts/backup-benchmark.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

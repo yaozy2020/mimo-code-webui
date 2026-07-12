@@ -15,7 +15,15 @@
 - Run the full deployment matrix on a clean Ubuntu 24.04 VM.
 - Confirm the browser reconciliation and cancellation paths once against a real provider session in the target deployment without using a production conversation.
 - Generate and independently distribute the production signing key; the code now requires Ed25519 verification before installation or upgrade and tests forged signatures.
-- Calibrate backup capacity, retention, and restore objectives with production-sized data.
+- Repeat the capacity benchmark with deployment-specific data composition before changing the default retention or recovery objectives.
+
+## Backup Capacity Benchmark
+
+- Reproducible command: `npm run benchmark:backup`; defaults to 1 GiB split across 64 files of 16 MiB.
+- Host result: 1,073,741,824 source bytes, 1,073,752,475 backup bytes, 1.0 disk amplification, 1,537 ms backup, 613 ms full verification, and 811 ms isolated restore.
+- The benchmark excludes service stop/start time; the Ubuntu VM measured the normal WebUI and MiMo startup window separately.
+- `MIMO_BACKUP_KEEP` now defaults to 7 and pruning occurs only after a newly verified snapshot is atomically promoted. Capacity guidance is `(keep + 2) * protected data size`, which gives a 9x protected-data budget at the default retention.
+- The implementation hashes one complete file in memory. Deployments with unusually large individual files should benchmark that maximum file size or move hashing to streams before increasing scale.
 - Keep 5.6 background actor workflows disabled until the documented delivery test passes twice consecutively.
 
 ## Ubuntu 24.04 VM Evidence

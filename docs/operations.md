@@ -92,6 +92,8 @@ When explicitly installed and enabled, `mimo-code-webui-backup.timer` runs a dai
 
 Backups older than `MIMO_BACKUP_MAX_AGE_MS` are reported as degraded. A failed attempt never deletes the previous valid backup. Before restoring, run `node scripts/backup-state.mjs verify BACKUP_DIRECTORY` in an isolated host, then validate SQLite integrity and application-level reads before replacing production data. Program rollback and data restore are always separate operator actions.
 
+Successful backups retain the newest `MIMO_BACKUP_KEEP` snapshots, defaulting to 7. Pruning runs only after the new snapshot passes manifest verification and is atomically promoted. Size the backup filesystem for at least `(MIMO_BACKUP_KEEP + 2) * current protected data size`: retained snapshots, one staging copy, and operational headroom. Backups are filesystem copies rather than compressed archives, so measured disk amplification is approximately 1.0 per snapshot.
+
 For an isolated restore drill, run `node scripts/backup-state.mjs restore BACKUP_DIRECTORY EMPTY_DESTINATION`. The command refuses non-empty destinations and writes `restore-report.json` with the backup ID, file count, and measured restore duration. Validate the restored database and application behavior in that isolated destination; do not use this command to overwrite live state.
 
 ### MiMo process ownership

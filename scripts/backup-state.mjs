@@ -13,6 +13,8 @@ const sources = [
   ["mimo-state", process.env.MIMO_STATE_DIR || "/var/lib/mimo-code-webui/home/.local/share/mimocode"],
 ]
 const offline = process.env.MIMO_BACKUP_OFFLINE === "true"
+const keepBackups = Number(process.env.MIMO_BACKUP_KEEP || 7)
+if (!Number.isSafeInteger(keepBackups) || keepBackups < 1) throw new Error("MIMO_BACKUP_KEEP must be a positive integer")
 let staging = ""
 
 function verifyBackup(root) {
@@ -55,6 +57,14 @@ function writeStatus(value) {
   const temporary = `${statusFile}.${process.pid}.tmp`
   fs.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o644 })
   fs.renameSync(temporary, statusFile)
+}
+
+function pruneBackups() {
+  const completed = fs.readdirSync(backupRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+    .map((entry) => ({ name: entry.name, created: fs.statSync(path.join(backupRoot, entry.name)).mtimeMs }))
+    .sort((a, b) => b.created - a.created)
+  for (const entry of completed.slice(keepBackups)) fs.rmSync(path.join(backupRoot, entry.name), { recursive: true })
 }
 
 function filesUnder(root) {
@@ -119,6 +129,7 @@ try {
   fs.writeFileSync(path.join(staging, "backup-manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o640 })
   verifyBackup(staging)
   fs.renameSync(staging, target)
+  pruneBackups()
   writeStatus({ state: "healthy", lastSuccessAt: startedAt, lastAttemptAt: startedAt, backup: target, fileCount: manifest.files.length })
   console.log(`backup complete: ${target}`)
 } catch (error) {
