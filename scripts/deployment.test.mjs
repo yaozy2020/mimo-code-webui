@@ -36,6 +36,7 @@ test("strict startup checks artifacts and dependency resolution", () => {
 
 test("deployment CLI enforces archive and health safety", () => {
   const script = read("deploy/mimo-code-webui")
+  assert.notEqual(fs.statSync(path.join(root, "deploy/mimo-code-webui")).mode & 0o111, 0, "deployment CLI must be executable")
   assert.match(script, /checksum sidecar not found/)
   assert.match(script, /--public-key is required/)
   assert.match(script, /release signature verification failed/)
@@ -235,7 +236,7 @@ test("formal release packaging enforces signed provenance and supports explicit 
     assert.equal(bundledWeb, "tracked commit input\n")
     assert.doesNotMatch(bundledWeb, /UNTRACKED BUILD INPUT|FAKE WORKTREE DIST/)
     const verified = spawnSync(path.join(root, "deploy/mimo-code-webui"), ["verify-archive", "--archive", archive, "--public-key", publicKey], { encoding: "utf8" })
-    assert.equal(verified.status, 0, verified.stderr)
+    assert.equal(verified.status, 0, verified.error?.message ?? verified.stderr)
 
     const offlineBin = path.join(fixture, "offline-bin")
     fs.mkdirSync(offlineBin)
