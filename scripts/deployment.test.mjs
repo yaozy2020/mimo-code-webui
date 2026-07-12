@@ -237,6 +237,19 @@ test("formal release packaging enforces signed provenance and supports explicit 
     const verified = spawnSync(path.join(root, "deploy/mimo-code-webui"), ["verify-archive", "--archive", archive, "--public-key", publicKey], { encoding: "utf8" })
     assert.equal(verified.status, 0, verified.stderr)
 
+    const offlineBin = path.join(fixture, "offline-bin")
+    fs.mkdirSync(offlineBin)
+    for (const command of ["bash", "node", "tar", "gzip", "sha256sum", "openssl", "readlink", "awk", "find", "mktemp", "rm", "basename"]) {
+      const executable = command === "node" ? process.execPath : spawnSync("sh", ["-c", `command -v ${command}`], { encoding: "utf8" }).stdout.trim()
+      assert.notEqual(executable, "", `${command} is required for the offline verification fixture`)
+      fs.symlinkSync(executable, path.join(offlineBin, command))
+    }
+    const offlineVerified = spawnSync(path.join(root, "deploy/mimo-code-webui"), ["verify-archive", "--archive", archive, "--public-key", publicKey], {
+      encoding: "utf8",
+      env: { ...process.env, PATH: offlineBin },
+    })
+    assert.equal(offlineVerified.status, 0, offlineVerified.stderr)
+
     const unsignedArtifact = run(["--unsigned"])
     assert.equal(unsignedArtifact.status, 0, unsignedArtifact.stderr)
     const unsignedArchive = path.join(fixture, "dist-release/mimo-code-webui-v1.2.3.unsigned.tar.gz")

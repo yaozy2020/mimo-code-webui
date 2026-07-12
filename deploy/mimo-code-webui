@@ -195,6 +195,14 @@ check_runtime() {
   check_mimo_version
 }
 
+check_archive_runtime() {
+  local node_major
+  for command in node tar sha256sum openssl; do require_command "$command"; done
+  node_major="$(node -p 'Number(process.versions.node.split(".")[0])')"
+  [ "$node_major" -ge 18 ] || die "Node.js 18+ is required; found $(node --version)"
+  log "node=$(command -v node) ($(node --version))"
+}
+
 check_mimo_version() {
   local output version
   if [ -n "$TEST_ROOT" ]; then
@@ -1065,7 +1073,7 @@ verify_archive_only() {
   [ -n "$CHECKSUM" ] && CHECKSUM="$(readlink -f "$CHECKSUM")"
   [ -n "$SIGNATURE" ] && SIGNATURE="$(readlink -f "$SIGNATURE")"
   [ -n "$PUBLIC_KEY" ] && PUBLIC_KEY="$(readlink -f "$PUBLIC_KEY")"
-  check_runtime
+  check_archive_runtime
   validate_archive
   local temp extracted
   temp="$(mktemp -d)"
