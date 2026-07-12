@@ -30,3 +30,4 @@
 - Full guest reboot preserved the enabled service and timer, returned HTTP healthy, and left exactly one managed MiMo process. Explicit release rollback preserved service health and timer enablement.
 - Protected purge verified the external backup before deleting release/config/state, retained the workspace sentinel, and a clean reinstall enabled both the main service and backup timer.
 - Another healthy upgrade confirmed that the mandatory pre-upgrade backup and old-service recovery occur before candidate release switching; failure injection must therefore target the candidate release identity rather than the next MiMo start globally.
+- The systemd `PrivateTmp=true` boundary also prevented a host-visible `/tmp` failure marker from reaching the service, confirming the intended temporary-directory isolation.
