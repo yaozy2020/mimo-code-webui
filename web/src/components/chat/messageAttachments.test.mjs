@@ -10,6 +10,11 @@ const imagePart = {
 }
 
 assert.deepEqual(getVisibleAttachments({ id: "m1", sessionID: "s1", role: "user", parts: [imagePart] }), [imagePart])
+assert.deepEqual(
+  getVisibleAttachments({ id: "m1", sessionID: "s1", role: "user", parts: [imagePart, { ...imagePart, id: "server-p1" }] }),
+  [imagePart],
+  "rendering should suppress duplicate optimistic and server attachment parts",
+)
 
 assert.match(attachmentPreviewClassName("user"), /border-primary/)
 assert.match(attachmentPreviewClassName("user"), /bg-primary/)

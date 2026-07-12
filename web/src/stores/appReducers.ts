@@ -10,14 +10,20 @@ function isVisibleAttachment(part: NonNullable<Message["parts"]>[number]) {
   return part.type === "file" || part.type === "image"
 }
 
+function attachmentIdentity(part: NonNullable<Message["parts"]>[number]) {
+  const source = part.url || part.content || part.text
+  if (source) return source
+  return `${part.type}:${part.mime ?? ""}:${part.filename ?? ""}:${part.id}`
+}
+
 export function mergeMessagePartsWithVisibleAttachments(
   preferredParts: Message["parts"],
   fallbackParts: Message["parts"],
 ): Message["parts"] {
   const localAttachments = fallbackParts?.filter(isVisibleAttachment) ?? []
   if (!preferredParts?.length || localAttachments.length === 0) return preferredParts ?? fallbackParts
-  const existingIds = new Set(preferredParts.map((part) => part.id))
-  const missingAttachments = localAttachments.filter((part) => !existingIds.has(part.id))
+  const existingAttachments = new Set(preferredParts.filter(isVisibleAttachment).map(attachmentIdentity))
+  const missingAttachments = localAttachments.filter((part) => !existingAttachments.has(attachmentIdentity(part)))
   return missingAttachments.length > 0 ? [...preferredParts, ...missingAttachments] : preferredParts
 }
 

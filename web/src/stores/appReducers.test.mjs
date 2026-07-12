@@ -13,6 +13,13 @@ const serverTextPart = { id: "srv-text", type: "text", content: "看这个" }
 const localImagePart = { id: "local-image", type: "file", mime: "image/png", filename: "shot.png", url: "data:image/png;base64,abc" }
 assert.deepEqual(mergeMessagePartsWithVisibleAttachments([serverTextPart], [serverTextPart, localImagePart]), [serverTextPart, localImagePart])
 
+const serverImagePart = { ...localImagePart, id: "server-image" }
+assert.deepEqual(
+  mergeMessagePartsWithVisibleAttachments([serverTextPart, serverImagePart], [serverTextPart, localImagePart]),
+  [serverTextPart, serverImagePart],
+  "server and optimistic copies of the same attachment should reconcile by content",
+)
+
 const repeatedServerMessages = [
   { id: "server-1", sessionID, role: "user", content: "same text" },
 ]

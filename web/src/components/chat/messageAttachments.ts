@@ -1,7 +1,17 @@
 import type { Message, MessagePart } from "../../types"
 
 export function getVisibleAttachments(message: Pick<Message, "parts">): MessagePart[] {
-  return message.parts?.filter((part) => part.type === "file" || part.type === "image") ?? []
+  const seen = new Set<string>()
+  return message.parts?.filter((part) => {
+    if (part.type !== "file" && part.type !== "image") return false
+    const source = part.url || part.content || part.text
+    const identity = source
+      ? source
+      : `${part.type}:${part.mime ?? ""}:${part.filename ?? ""}:${part.id}`
+    if (seen.has(identity)) return false
+    seen.add(identity)
+    return true
+  }) ?? []
 }
 
 export function attachmentPreviewClassName(role: Message["role"]) {
