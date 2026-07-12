@@ -17,6 +17,24 @@ const keepBackups = Number(process.env.MIMO_BACKUP_KEEP || 7)
 if (!Number.isSafeInteger(keepBackups) || keepBackups < 1) throw new Error("MIMO_BACKUP_KEEP must be a positive integer")
 let staging = ""
 
+function digestFile(file) {
+  const hash = crypto.createHash("sha256")
+  const buffer = Buffer.allocUnsafe(1024 * 1024)
+  const descriptor = fs.openSync(file, "r")
+  let size = 0
+  try {
+    while (true) {
+      const bytes = fs.readSync(descriptor, buffer, 0, buffer.length, null)
+      if (bytes === 0) break
+      hash.update(buffer.subarray(0, bytes))
+      size += bytes
+    }
+  } finally {
+    fs.closeSync(descriptor)
+  }
+  return { size, sha256: hash.digest("hex") }
+}
+
 function verifyBackup(root) {
   const manifest = JSON.parse(fs.readFileSync(path.join(root, "backup-manifest.json"), "utf8"))
   if (manifest.schemaVersion !== 1 || !Array.isArray(manifest.files)) throw new Error("unsupported backup manifest")
@@ -25,9 +43,8 @@ function verifyBackup(root) {
   if (actual.length !== expected.size || actual.some((file) => !expected.has(file))) throw new Error("backup file set does not match manifest")
   for (const entry of manifest.files) {
     if (typeof entry.path !== "string" || entry.path.startsWith("/") || entry.path.split(path.sep).includes("..")) throw new Error("unsafe backup manifest path")
-    const content = fs.readFileSync(path.join(root, entry.path))
-    const digest = crypto.createHash("sha256").update(content).digest("hex")
-    if (content.length !== entry.size || digest !== entry.sha256) throw new Error(`backup checksum mismatch: ${entry.path}`)
+    const digest = digestFile(path.join(root, entry.path))
+    if (digest.size !== entry.size || digest.sha256 !== entry.sha256) throw new Error(`backup checksum mismatch: ${entry.path}`)
   }
   return manifest
 }
@@ -122,8 +139,7 @@ try {
       filter: (source) => !path.relative(root, source).split(path.sep).includes("node_modules"),
     })
     for (const file of filesUnder(destination)) {
-      const content = fs.readFileSync(file)
-      manifest.files.push({ path: path.relative(staging, file), size: content.length, sha256: crypto.createHash("sha256").update(content).digest("hex") })
+      manifest.files.push({ path: path.relative(staging, file), ...digestFile(file) })
     }
   }
   fs.writeFileSync(path.join(staging, "backup-manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o640 })

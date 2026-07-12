@@ -13,6 +13,8 @@ The supported production path is the release-package installer on Linux with sys
 
 The installer does not install Node.js, MiMo-Code, Nginx, or Caddy.
 
+The project public key is published at `deploy/keys/mimo-code-webui-release.pub`; verify its independently communicated SHA-256 fingerprint before use. The current fingerprint is `4e49ece0fe7f28708821437dd1268e425bca81b2418ea8fd195cce74fe5b43f8`.
+
 ## Install
 
 Extract the release archive and run its installer:

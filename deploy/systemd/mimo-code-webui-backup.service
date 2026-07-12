@@ -2,6 +2,7 @@
 Description=Back up MiMo Code WebUI and MiMo state
 Documentation=https://github.com/yaozy2020/mimo-code-webui
 ConditionPathExists=/opt/mimo-code-webui/current/scripts/backup-state.mjs
+OnFailure=mimo-code-webui-alert@%n.service
 
 [Service]
 Type=oneshot

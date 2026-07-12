@@ -1,0 +1,11 @@
+[Unit]
+Description=Send MiMo Code WebUI failure alert for %i
+Documentation=https://github.com/yaozy2020/mimo-code-webui
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/mimo-code-webui/alert.env
+ExecStart=/opt/mimo-code-webui/current/scripts/send-alert.sh %i failed
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true

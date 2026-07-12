@@ -13,6 +13,11 @@ test("systemd leaves runtime settings to the environment file", () => {
   assert.match(unit, /^EnvironmentFile=\/etc\/mimo-code-webui\/webui\.env$/m)
   assert.doesNotMatch(unit, /^Environment=(HOST|PORT|MIMO_)/m)
   assert.match(unit, /^ExecStart=\/opt\/mimo-code-webui\/current\/scripts\/start\.sh$/m)
+  assert.match(unit, /^OnFailure=mimo-code-webui-alert@%n\.service$/m)
+  const backupUnit = read("deploy/systemd/mimo-code-webui-backup.service")
+  assert.match(backupUnit, /^OnFailure=mimo-code-webui-alert@%n\.service$/m)
+  const alertUnit = read("deploy/systemd/mimo-code-webui-alert@.service")
+  assert.match(alertUnit, /^EnvironmentFile=-\/etc\/mimo-code-webui\/alert\.env$/m)
 })
 
 test("strict startup checks artifacts and dependency resolution", () => {
@@ -48,6 +53,8 @@ test("release packaging includes installer and checksum", () => {
   assert.match(script, /scripts\/backup-state\.mjs/)
   assert.match(script, /copy\("scripts\/backup-state\.mjs"\)/)
   assert.match(script, /mimo-code-webui-backup\.timer/)
+  assert.match(script, /mimo-code-webui-alert@\.service/)
+  assert.match(script, /scripts\/send-alert\.sh/)
   assert.match(script, /Refusing to package a dirty worktree/)
   assert.match(script, /--sort=name/)
   assert.match(script, /--numeric-owner/)

@@ -3,6 +3,7 @@ Description=MiMo Code WebUI
 Documentation=https://github.com/yaozy2020/mimo-code-webui
 After=network-online.target
 Wants=network-online.target
+OnFailure=mimo-code-webui-alert@%n.service
 
 [Service]
 Type=simple

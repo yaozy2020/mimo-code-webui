@@ -12,7 +12,9 @@ const installer = path.join(root, "deploy/mimo-code-webui")
 const unit = fs.readFileSync(path.join(root, "deploy/systemd/mimo-code-webui.service"))
 const backupServiceUnit = fs.readFileSync(path.join(root, "deploy/systemd/mimo-code-webui-backup.service"))
 const backupTimerUnit = fs.readFileSync(path.join(root, "deploy/systemd/mimo-code-webui-backup.timer"))
+const alertUnit = fs.readFileSync(path.join(root, "deploy/systemd/mimo-code-webui-alert@.service"))
 const backupScript = fs.readFileSync(path.join(root, "scripts/backup-state.mjs"))
+const alertScript = fs.readFileSync(path.join(root, "scripts/send-alert.sh"))
 const signingDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "mimo-deploy-signing-"))
 const signingKey = path.join(signingDirectory, "release.key")
 const publicKey = path.join(signingDirectory, "release.pub")
@@ -31,10 +33,12 @@ function createRelease(directory, version) {
     ["web/dist/index.html", Buffer.from("<!doctype html>\n")],
     ["scripts/start.sh", Buffer.from("#!/usr/bin/env bash\nexit 0\n")],
     ["scripts/backup-state.mjs", backupScript],
+    ["scripts/send-alert.sh", alertScript],
     ["deploy/mimo-code-webui", fs.readFileSync(installer)],
     ["deploy/systemd/mimo-code-webui.service", unit],
     ["deploy/systemd/mimo-code-webui-backup.service", backupServiceUnit],
     ["deploy/systemd/mimo-code-webui-backup.timer", backupTimerUnit],
+    ["deploy/systemd/mimo-code-webui-alert@.service", alertUnit],
     ["package.json", Buffer.from(`{"name":"fixture","version":"${version}"}\n`)],
     ["package-lock.json", Buffer.from(`{"name":"fixture","version":"${version}","lockfileVersion":3,"packages":{}}\n`)],
   ])

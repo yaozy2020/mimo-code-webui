@@ -32,7 +32,7 @@ function copy(src, dest = src) {
 fs.rmSync(stage, { recursive: true, force: true })
 fs.mkdirSync(stage, { recursive: true })
 
-for (const required of ["web/dist", "server/dist", "package.json", "package-lock.json", "README.md", ".env.example", "docs/deployment.md", "scripts/backup-state.mjs", "deploy/mimo-code-webui", "deploy/systemd/mimo-code-webui.service", "deploy/systemd/mimo-code-webui-backup.service", "deploy/systemd/mimo-code-webui-backup.timer"]) {
+for (const required of ["web/dist", "server/dist", "package.json", "package-lock.json", "README.md", ".env.example", "docs/deployment.md", "scripts/backup-state.mjs", "scripts/send-alert.sh", "deploy/mimo-code-webui", "deploy/systemd/mimo-code-webui.service", "deploy/systemd/mimo-code-webui-backup.service", "deploy/systemd/mimo-code-webui-backup.timer", "deploy/systemd/mimo-code-webui-alert@.service"]) {
   if (!fs.existsSync(path.join(root, required))) throw new Error(`Missing required release input: ${required}`)
 }
 
@@ -46,6 +46,7 @@ copy("web/package.json")
 copy("scripts/start.sh")
 copy("scripts/start.bat")
 copy("scripts/backup-state.mjs")
+copy("scripts/send-alert.sh")
 copy("README.md")
 if (fs.existsSync(path.join(root, "docs/operations.md"))) copy("docs/operations.md")
 if (fs.existsSync(path.join(root, "docs/testing.md"))) copy("docs/testing.md")
@@ -59,7 +60,7 @@ function normalizeModes(directory) {
       fs.chmodSync(absolute, 0o755)
       normalizeModes(absolute)
     } else if (entry.isFile()) {
-      const executable = absolute.endsWith(path.join("scripts", "start.sh")) || absolute.endsWith(path.join("deploy", "mimo-code-webui"))
+      const executable = absolute.endsWith(path.join("scripts", "start.sh")) || absolute.endsWith(path.join("scripts", "send-alert.sh")) || absolute.endsWith(path.join("deploy", "mimo-code-webui"))
       fs.chmodSync(absolute, executable ? 0o755 : 0o644)
     }
   }

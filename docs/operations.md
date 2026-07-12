@@ -36,6 +36,8 @@ VERIFY_RELEASE_CI_INSTALL=true ./scripts/verify-release.sh
 
 This gate is intentionally local/self-hosted friendly and does not require GitHub Actions minutes. If hosted CI quota becomes available later, call the same script from CI rather than duplicating the command list.
 
+The production Ed25519 private key is stored outside the repository with directory mode `0700` and key mode `0600`. Its public key is committed under `deploy/keys`; verify the fingerprint in `deploy/keys/SHA256SUMS` through an independent channel. Maintain at least one encrypted offline private-key backup before depending on signed releases for disaster recovery.
+
 ## Production Startup
 
 Set `MIMO_WEBUI_STRICT_RELEASE=true` in production. Strict release mode requires the built frontend/backend entrypoints and resolvable production dependencies. It never installs dependencies or builds assets during service start; npm workspace dependencies may be hoisted to the root `node_modules`.
@@ -45,6 +47,16 @@ Set `MIMO_WEBUI_STRICT_RELEASE=true` in production. Strict release mode requires
 Every HTTP response includes `X-Request-ID`. If a reverse proxy supplies `X-Request-ID`, the server preserves it; otherwise the server generates one. Use this value to correlate client errors with server logs.
 
 Server request and route-error logs are emitted as one-line JSON with an event name, request ID, status, and duration where applicable. Authenticated `/local-status` includes MiMo supervisor state, restart count, consecutive failures, last restart time and reason, last healthy time, and startup duration. Public `/status` intentionally omits these operational details.
+
+## Failure Alerts
+
+The main service and backup service trigger `mimo-code-webui-alert@.service` on failure. Configure a Webhook endpoint in the root-only file `/etc/mimo-code-webui/alert.env`:
+
+```bash
+MIMO_ALERT_WEBHOOK_URL=https://alerts.example.invalid/mimo-code-webui
+```
+
+Set ownership to `root:root` and mode `0600`, then run `systemctl daemon-reload`. The alert payload contains only product, host, unit, state, and timestamp; it never contains `AUTH_TOKEN`, prompts, paths, or MiMo configuration. If no Webhook is configured, the alert service writes a journal warning and exits successfully to avoid failure loops.
 
 ## LAN Access
 

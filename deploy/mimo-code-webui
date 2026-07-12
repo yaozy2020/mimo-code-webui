@@ -12,8 +12,10 @@ UNIT_SOURCE="deploy/systemd/mimo-code-webui.service"
 UNIT_TARGET="/etc/systemd/system/$SERVICE_NAME.service"
 BACKUP_SERVICE_SOURCE="deploy/systemd/mimo-code-webui-backup.service"
 BACKUP_TIMER_SOURCE="deploy/systemd/mimo-code-webui-backup.timer"
+ALERT_UNIT_SOURCE="deploy/systemd/mimo-code-webui-alert@.service"
 BACKUP_SERVICE_TARGET="/etc/systemd/system/mimo-code-webui-backup.service"
 BACKUP_TIMER_TARGET="/etc/systemd/system/mimo-code-webui-backup.timer"
+ALERT_UNIT_TARGET="/etc/systemd/system/mimo-code-webui-alert@.service"
 LOCK_FILE="/run/lock/$SERVICE_NAME-deploy.lock"
 TEST_ROOT="${MIMO_DEPLOY_TEST_ROOT:-}"
 HEALTH_TIMEOUT=60
@@ -62,6 +64,7 @@ if [ -n "$TEST_ROOT" ]; then
   UNIT_TARGET="$TEST_ROOT/etc/systemd/system/$SERVICE_NAME.service"
   BACKUP_SERVICE_TARGET="$TEST_ROOT/etc/systemd/system/mimo-code-webui-backup.service"
   BACKUP_TIMER_TARGET="$TEST_ROOT/etc/systemd/system/mimo-code-webui-backup.timer"
+  ALERT_UNIT_TARGET="$TEST_ROOT/etc/systemd/system/mimo-code-webui-alert@.service"
   LOCK_FILE="$TEST_ROOT/run/lock/$SERVICE_NAME-deploy.lock"
   MIMO_BACKUP_ROOT="${MIMO_BACKUP_ROOT:-$TEST_ROOT/var/backups/mimo-code-webui}"
 fi
@@ -260,7 +263,7 @@ cleanup_failed_install() {
     systemctl_cmd disable --now "$SERVICE_NAME" >/dev/null 2>&1 || true
     systemctl_cmd disable --now mimo-code-webui-backup.timer >/dev/null 2>&1 || true
     if [ "$INSTALLED_UNIT" = true ]; then
-      rm -f "$UNIT_TARGET" "$BACKUP_SERVICE_TARGET" "$BACKUP_TIMER_TARGET"
+      rm -f "$UNIT_TARGET" "$BACKUP_SERVICE_TARGET" "$BACKUP_TIMER_TARGET" "$ALERT_UNIT_TARGET"
       systemctl_cmd daemon-reload >/dev/null 2>&1 || true
     fi
     rm -f "$INSTALL_ROOT/current.new" "$INSTALL_ROOT/current" "$INSTALL_ROOT/previous.new" "$INSTALL_ROOT/previous"
@@ -464,9 +467,11 @@ install_units_for_path() {
   local release_path="$1"
   [ -n "$release_path" ] && [ -f "$release_path/$UNIT_SOURCE" ] && \
     [ -f "$release_path/$BACKUP_SERVICE_SOURCE" ] && [ -f "$release_path/$BACKUP_TIMER_SOURCE" ] || return 1
+  [ -f "$release_path/$ALERT_UNIT_SOURCE" ] || return 1
   install -D -m 0644 "$release_path/$UNIT_SOURCE" "$UNIT_TARGET"
   install -D -m 0644 "$release_path/$BACKUP_SERVICE_SOURCE" "$BACKUP_SERVICE_TARGET"
   install -D -m 0644 "$release_path/$BACKUP_TIMER_SOURCE" "$BACKUP_TIMER_TARGET"
+  install -D -m 0644 "$release_path/$ALERT_UNIT_SOURCE" "$ALERT_UNIT_TARGET"
   systemctl_cmd daemon-reload
 }
 
@@ -691,7 +696,7 @@ NODE
   fi
   systemctl_cmd disable --now "$SERVICE_NAME" >/dev/null 2>&1 || true
   systemctl_cmd disable --now mimo-code-webui-backup.timer >/dev/null 2>&1 || true
-  rm -f "$UNIT_TARGET" "$BACKUP_SERVICE_TARGET" "$BACKUP_TIMER_TARGET"
+  rm -f "$UNIT_TARGET" "$BACKUP_SERVICE_TARGET" "$BACKUP_TIMER_TARGET" "$ALERT_UNIT_TARGET"
   systemctl_cmd daemon-reload
   if [ "$PURGE" = true ]; then rm -rf "$INSTALL_ROOT" "$CONFIG_DIR" "$STATE_ROOT"; fi
   log "uninstalled; workspace retained at $WORKSPACE_ROOT"
