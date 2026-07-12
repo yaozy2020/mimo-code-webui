@@ -30,6 +30,8 @@ test("deployment CLI enforces archive and health safety", () => {
   assert.match(script, /s\.mimo\?\.healthy === true/)
   assert.match(script, /restored previous release/)
   assert.match(script, /AUTH_TOKEN=configured/)
+  assert.match(script, /enable mimo-code-webui-backup\.timer/)
+  assert.match(script, /disable --now mimo-code-webui-backup\.timer/)
   assert.doesNotMatch(script, /ALLOW_UNAUTHENTICATED_LAN/)
 })
 

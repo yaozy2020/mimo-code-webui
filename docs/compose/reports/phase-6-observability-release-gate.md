@@ -17,3 +17,11 @@
 - Establish an independently distributed release signing key and require signature verification before installation or upgrade.
 - Calibrate backup capacity, retention, and restore objectives with production-sized data.
 - Keep 5.6 background actor workflows disabled until the documented delivery test passes twice consecutively.
+
+## Ubuntu 24.04 VM Evidence
+
+- Guest: Ubuntu 24.04, kernel 6.8, systemd 255, Node.js 18.19.1, npm 9.2.0, 2 vCPU, 4 GiB RAM, 20 GiB qcow2.
+- The official Noble cloud image was verified against its published SHA-256 before creating a disposable overlay.
+- A failed first install caused by an intentionally incomplete MiMo test stub compensated cleanly: the service, unit, service user, release link, configuration, and state were removed.
+- After correcting the stub to match the real MiMo readiness contract, first install completed with the service enabled and active, authenticated public status healthy, the release symlink correct, and exactly one managed MiMo process.
+- The VM exposed that backup unit files were packaged but not installed. The deployment transaction now installs and enables the backup timer with the main service, restores all units during rollback, and removes all units during uninstall; sandbox regression coverage passed.

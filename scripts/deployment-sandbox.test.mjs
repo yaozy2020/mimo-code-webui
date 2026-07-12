@@ -10,6 +10,8 @@ import { fileURLToPath } from "node:url"
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const installer = path.join(root, "deploy/mimo-code-webui")
 const unit = fs.readFileSync(path.join(root, "deploy/systemd/mimo-code-webui.service"))
+const backupServiceUnit = fs.readFileSync(path.join(root, "deploy/systemd/mimo-code-webui-backup.service"))
+const backupTimerUnit = fs.readFileSync(path.join(root, "deploy/systemd/mimo-code-webui-backup.timer"))
 const backupScript = fs.readFileSync(path.join(root, "scripts/backup-state.mjs"))
 
 function sha256(content) {
@@ -26,6 +28,8 @@ function createRelease(directory, version) {
     ["scripts/backup-state.mjs", backupScript],
     ["deploy/mimo-code-webui", fs.readFileSync(installer)],
     ["deploy/systemd/mimo-code-webui.service", unit],
+    ["deploy/systemd/mimo-code-webui-backup.service", backupServiceUnit],
+    ["deploy/systemd/mimo-code-webui-backup.timer", backupTimerUnit],
     ["package.json", Buffer.from(`{"name":"fixture","version":"${version}"}\n`)],
     ["package-lock.json", Buffer.from(`{"name":"fixture","version":"${version}","lockfileVersion":3,"packages":{}}\n`)],
   ])
@@ -151,7 +155,7 @@ test("failed install and upgrade restore prior state", () => {
     assert.deepEqual(fs.readFileSync(path.join(sandbox, "etc/systemd/system/mimo-code-webui.service")), unitBefore)
     assert.deepEqual(fs.readFileSync(path.join(sandbox, "etc/mimo-code-webui/webui.env")), configBefore)
     const calls = fs.readFileSync(path.join(sandbox, "systemctl.log"), "utf8").trim().split("\n")
-    assert.deepEqual(calls, ["stop mimo-code-webui", "start mimo-code-webui", "daemon-reload", "enable mimo-code-webui", "restart mimo-code-webui", "daemon-reload", "restart mimo-code-webui", "daemon-reload", "restart mimo-code-webui"])
+    assert.deepEqual(calls, ["stop mimo-code-webui", "start mimo-code-webui", "daemon-reload", "enable mimo-code-webui", "enable mimo-code-webui-backup.timer", "restart mimo-code-webui", "daemon-reload", "restart mimo-code-webui", "daemon-reload", "restart mimo-code-webui"])
     fs.rmSync(sandbox, { recursive: true, force: true })
   } finally {
     fs.rmSync(fixture, { recursive: true, force: true })
