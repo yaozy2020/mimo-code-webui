@@ -29,7 +29,7 @@ Implemented the production hardening plan without relying on GitHub Actions quot
 
 ## Not Fully Verified
 
-- 5.6 background actor compatibility remains untrusted. This session observed actors returning `idle`, `turnCount: 0`, and no output immediately after spawn. Direct command smoke can be run with `MODEL_RUNTIME_SMOKE_55` and `MODEL_RUNTIME_SMOKE_56`, but background actor delivery still requires the manual `READY` actor test described in `docs/operations.md`.
+- 5.6 background actor result delivery has partially recovered: two independent background actors both returned the final result `READY`. However, both completed with `status: idle` and `turnCount: 0`, so the strict gate requiring `turnCount > 0` did not pass. Direct command smoke can be run with `MODEL_RUNTIME_SMOKE_55` and `MODEL_RUNTIME_SMOKE_56`; compose/subagent/actor rollout remains disabled until result delivery and telemetry pass together twice consecutively.
 
 ## Production Readiness Verdict
 

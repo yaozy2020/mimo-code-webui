@@ -24,7 +24,7 @@
 - The benchmark excludes service stop/start time; the Ubuntu VM measured the normal WebUI and MiMo startup window separately.
 - `MIMO_BACKUP_KEEP` now defaults to 7 and pruning occurs only after a newly verified snapshot is atomically promoted. Capacity guidance is `(keep + 2) * protected data size`, which gives a 9x protected-data budget at the default retention.
 - The implementation hashes one complete file in memory. Deployments with unusually large individual files should benchmark that maximum file size or move hashing to streams before increasing scale.
-- Keep 5.6 background actor workflows disabled until the documented delivery test passes twice consecutively.
+- Keep 5.6 background actor workflows disabled: two independent tests returned `READY`, but both still reported `turnCount: 0`, failing the strict delivery-plus-telemetry gate.
 
 ## Ubuntu 24.04 VM Evidence
 
