@@ -38,6 +38,8 @@ export function usePromptController(input: { activeSessionID: string | null; act
       localAbortRef.current.set(requestKey, localAbort)
       claimRequest(requestOwnerRef.current, requestKey, localAbort)
       let nativePromptPending = false
+      let nativePromptAccepted = false
+      let nativePromptUncertain = false
       let assistantMessageID: string | null = null
       dispatch({
         type: "SET_AGENT_STATUS",
@@ -141,6 +143,7 @@ export function usePromptController(input: { activeSessionID: string | null; act
           directory: activeDirectory,
         })
         nativePromptPending = false
+        nativePromptAccepted = true
       } catch (error) {
         if (assistantMessageID) {
           dispatch({ type: "REMOVE_EMPTY_ASSISTANT", sessionID: activeSessionID, messageID: assistantMessageID })
@@ -148,9 +151,10 @@ export function usePromptController(input: { activeSessionID: string | null; act
         if (error instanceof DOMException && error.name === "AbortError") {
           return
         }
-        if (nativePromptPending) {
-          dispatch({ type: "PROMPT_FAILED", sessionID: activeSessionID, messageID: userMessage.id })
-        }
+        // A network failure after dispatching prompt_async does not prove the
+        // server rejected it. Keep the optimistic message and wait for sync.
+        nativePromptUncertain = nativePromptPending
+        if (nativePromptPending) return
         console.error("[ChatArea] failed to send prompt:", error)
         const errorMessage: Message = {
           id: createClientID("msg"),
@@ -164,7 +168,9 @@ export function usePromptController(input: { activeSessionID: string | null; act
       } finally {
         if (localAbortRef.current.get(requestKey) === localAbort) localAbortRef.current.delete(requestKey)
         if (releaseRequest(requestOwnerRef.current, requestKey, localAbort)) {
-          dispatch({ type: "SET_AGENT_STATUS", sessionID: activeSessionID, status: { sessionID: activeSessionID, state: "idle" } })
+          if (localRunSelected || (!nativePromptAccepted && !nativePromptUncertain)) {
+            dispatch({ type: "SET_AGENT_STATUS", sessionID: activeSessionID, status: { sessionID: activeSessionID, state: "idle" } })
+          }
         }
       }
     },

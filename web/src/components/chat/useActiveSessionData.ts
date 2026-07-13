@@ -1,5 +1,6 @@
 import { useEffect } from "react"
-import { getMessages, getRecentMessages, getSessionDiff, getTodos } from "@/api/session"
+import { getRecentMessages, getSessionDiff, getTodos } from "@/api/session"
+import { listPermissions, listQuestions } from "@/api/message"
 import { useAppDispatch } from "@/stores/appStore"
 import type { Message } from "@/types"
 
@@ -70,7 +71,12 @@ export function useActiveSessionData(input: { activeSessionID: string | null; ac
         if (!cancelled) {
           dispatch({ type: "SET_TODOS", sessionID: activeSessionID, todos })
         }
-        const msgs = await getMessages(activeSessionID, 50, undefined, activeDirectory)
+        const [permissions, questions] = await Promise.all([listPermissions(activeDirectory), listQuestions(activeDirectory)])
+        if (!cancelled) {
+          dispatch({ type: "SET_PENDING_PERMISSIONS", permissions })
+          dispatch({ type: "SET_PENDING_QUESTIONS", questions })
+        }
+        const msgs = await getRecentMessages(activeSessionID, activeDirectory)
         if (!cancelled) {
           dispatch({ type: "SET_MESSAGES", sessionID: activeSessionID, messages: msgs })
           const messageID = latestUserMessageID(msgs)
