@@ -1,6 +1,7 @@
 import { useState } from "react"
-import { CheckCircle2, Circle, ChevronDown, ChevronRight, GitBranch, Loader2, ScrollText, Shield } from "lucide-react"
+import { CheckCircle2, Circle, ChevronDown, ChevronRight, GitBranch, Loader2, ScrollText, Shield, Square } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { useAppState } from "@/stores/appStore"
 import { promptToolbarDiffRowClassName, promptToolbarRowClassName } from "./promptToolbarDisplay"
 import { getSessionSource } from "./sessionSource"
@@ -20,10 +21,11 @@ function formatTokenCount(tokens: number) {
 
 interface PromptToolbarProps {
   sessionID: string
+  onAbort: () => void
   onOpenFileChanges?: () => void
 }
 
-export function PromptToolbar({ sessionID, onOpenFileChanges }: PromptToolbarProps) {
+export function PromptToolbar({ sessionID, onAbort, onOpenFileChanges }: PromptToolbarProps) {
   const { agentStatus, attachedSessionIDs, contextUsage, currentWorkspace, gitStatus, ownedSessionIDs, sessionDiffs, sessions, todos } = useAppState()
   const [todoExpanded, setTodoExpanded] = useState(false)
   const [fileDetailsExpanded, setFileDetailsExpanded] = useState(false)
@@ -43,12 +45,25 @@ export function PromptToolbar({ sessionID, onOpenFileChanges }: PromptToolbarPro
     <div className="border-b border-border/60 bg-background/85 px-2 py-1.5 backdrop-blur sm:px-4">
       <div className={promptToolbarRowClassName}>
         <Badge variant={statusState === "busy" ? "default" : "secondary"} className="shrink-0 gap-1 capitalize text-[10px]">
-            {statusState === "busy" && <Loader2 className="h-3 w-3 animate-spin" />}
+          {statusState === "busy" && <Loader2 className="h-3 w-3 animate-spin" />}
             {(statusState === "waiting_for_permission" || statusState === "waiting_for_question") && (
               <Shield className="h-3 w-3" />
             )}
           {statusLabels[statusState]}
         </Badge>
+        {statusState === "busy" && (
+          <Button
+            type="button"
+            size="sm"
+            variant="destructive"
+            onClick={onAbort}
+            title="停止当前任务（Esc）"
+            aria-label="停止当前任务"
+            className="h-6 w-6 shrink-0 rounded-md p-0"
+          >
+            <Square className="h-3 w-3" />
+          </Button>
+        )}
         {contextLabel && (
           <Badge variant="outline" className="shrink-0 gap-1 text-[10px]">
             <ScrollText className="h-3 w-3" />

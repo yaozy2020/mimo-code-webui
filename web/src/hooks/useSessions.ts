@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from "react"
-import { createSession, deleteSession, forkSession, getTodos, listSessions, updateSession } from "@/api/session"
+import { createSession, deleteSession, forkSession, getSessionStatuses, getTodos, listSessions, updateSession } from "@/api/session"
 import { useAppDispatch, useAppState } from "@/stores/appStore"
 
 export function useSessions() {
@@ -14,7 +14,23 @@ export function useSessions() {
       const data = await listSessions()
       dispatch({ type: "SET_SESSIONS", sessions: data })
       const visible = data.filter((session) => visibleSessionIDs.has(session.id))
-      const todoResults = await Promise.allSettled(visible.map((session) => getTodos(session.id, session.directory)))
+      const directories = [...new Set(visible.map((session) => session.directory))]
+      const [statusResults, todoResults] = await Promise.all([
+        Promise.allSettled(directories.map(async (directory) => [directory, await getSessionStatuses(directory)] as const)),
+        Promise.allSettled(visible.map((session) => getTodos(session.id, session.directory))),
+      ])
+      const statusesByDirectory = new Map(
+        statusResults.flatMap((result) => result.status === "fulfilled" ? [result.value] : []),
+      )
+      visible.forEach((session) => {
+        const type = statusesByDirectory.get(session.directory)?.[session.id]?.type
+        if (!type) return
+        dispatch({
+          type: "SET_AGENT_STATUS",
+          sessionID: session.id,
+          status: { sessionID: session.id, state: type === "busy" || type === "retry" ? "busy" : "idle" },
+        })
+      })
       todoResults.forEach((result, index) => {
         if (result.status === "fulfilled") {
           dispatch({ type: "SET_TODOS", sessionID: visible[index].id, todos: result.value })

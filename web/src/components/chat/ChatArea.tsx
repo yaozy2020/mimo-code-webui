@@ -68,7 +68,7 @@ export function ChatArea({ onSlashAction }: ChatAreaProps) {
     <div className="flex min-w-0 flex-1 overflow-hidden">
       <div className="flex min-w-0 flex-1 flex-col bg-background">
         {activeSessionID && (
-          <PromptToolbar sessionID={activeSessionID} onOpenFileChanges={() => setShowFileChanges(true)} />
+          <PromptToolbar sessionID={activeSessionID} onAbort={handleAbort} onOpenFileChanges={() => setShowFileChanges(true)} />
         )}
         {sessionMessages.length === 0 && !busy && (
           <div className="flex flex-1 flex-col items-center justify-center gap-5 overflow-auto px-4 py-8 text-center text-muted-foreground">

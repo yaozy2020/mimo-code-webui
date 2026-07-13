@@ -41,12 +41,6 @@ export function usePromptController(input: { activeSessionID: string | null; act
       let nativePromptAccepted = false
       let nativePromptUncertain = false
       let assistantMessageID: string | null = null
-      dispatch({
-        type: "SET_AGENT_STATUS",
-        sessionID: activeSessionID,
-        status: { sessionID: activeSessionID, state: "busy" },
-      })
-
       const promptText = text
       const attachmentText = attachments
         .filter((attachment) => typeof attachment.content === "string")
@@ -82,6 +76,7 @@ export function usePromptController(input: { activeSessionID: string | null; act
         const route = await probePromptRoute(selectedModel, localAbort.signal, fetchRuntimeModels, activeDirectory)
 
         if (route === "local-run") {
+          if (busy) throw new Error("当前模型正在生成，请等待完成后再发送")
           localRunSelected = true
           const unsupportedAttachment = attachments.find((attachment) => typeof attachment.content !== "string")
           if (unsupportedAttachment) {
@@ -133,6 +128,11 @@ export function usePromptController(input: { activeSessionID: string | null; act
           return
         }
 
+        dispatch({
+          type: "SET_AGENT_STATUS",
+          sessionID: activeSessionID,
+          status: { sessionID: activeSessionID, state: "busy" },
+        })
         if (localAbortRef.current.get(requestKey) === localAbort) localAbortRef.current.delete(requestKey)
         dispatch({ type: "ADD_MESSAGE", sessionID: activeSessionID, message: userMessage })
         nativePromptPending = true
@@ -174,7 +174,7 @@ export function usePromptController(input: { activeSessionID: string | null; act
         }
       }
     },
-    [activeDirectory, activeSessionID, dispatch, settings.model],
+    [activeDirectory, activeSessionID, busy, dispatch, settings.model],
   )
 
   const handleAbort = useCallback(async () => {

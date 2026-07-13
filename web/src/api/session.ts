@@ -7,6 +7,10 @@ export interface SessionListResponse {
   data?: Session[]
 }
 
+export interface SessionRuntimeStatus {
+  type: "idle" | "busy" | "retry" | string
+}
+
 export interface ExperimentalSessionListResponse {
   sessions?: unknown[]
   data?: unknown[]
@@ -51,6 +55,10 @@ export async function listSessions(directory?: string): Promise<Session[]> {
   const result = await fetchJson<SessionListResponse | Session[]>(withDirectory("/session", directory))
   if (Array.isArray(result)) return sortSessions(result)
   return sortSessions(result.sessions ?? result.data ?? [])
+}
+
+export async function getSessionStatuses(directory?: string): Promise<Record<string, SessionRuntimeStatus>> {
+  return fetchJson<Record<string, SessionRuntimeStatus>>(withDirectory("/session/status", directory))
 }
 
 export async function discoverSessions(): Promise<Session[]> {

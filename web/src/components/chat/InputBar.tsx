@@ -27,7 +27,7 @@ const modeConfig: Record<PromptMode, { icon: typeof Code2; label: string; title:
 }
 
 interface InputBarProps {
-  onSend: (text: string, mode: PromptMode, attachments: PendingAttachment[]) => void
+  onSend: (text: string, mode: PromptMode, attachments: PendingAttachment[]) => Promise<void>
   onCommand: (command: string, args: string) => Promise<void>
   onAbort: () => void
   onSlashAction?: (action: SlashAction) => void
@@ -76,8 +76,21 @@ export function InputBar({ onSend, onCommand, onAbort, onSlashAction, busy }: In
     if (!busy) sendLockedRef.current = false
   }, [busy])
 
+  useEffect(() => {
+    if (!busy) return
+
+    const handleEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") return
+      event.preventDefault()
+      onAbort()
+    }
+
+    window.addEventListener("keydown", handleEscape)
+    return () => window.removeEventListener("keydown", handleEscape)
+  }, [busy, onAbort])
+
   const handleSend = async () => {
-    if (busy || sendLockedRef.current) return
+    if (sendLockedRef.current) return
     if (!text.trim() && attachments.length === 0) return
     const input = text.trim()
     if (input.startsWith("/")) {
@@ -107,11 +120,17 @@ export function InputBar({ onSend, onCommand, onAbort, onSlashAction, busy }: In
       return
     }
     sendLockedRef.current = true
-    onSend(input, mode, attachments)
-    setText("")
-    setAttachments([])
-    setAttachmentError(null)
-    textareaRef.current?.focus()
+    try {
+      await onSend(input, mode, attachments)
+      setText("")
+      setAttachments([])
+      setAttachmentError(null)
+    } catch (error) {
+      setCommandError(error instanceof Error ? error.message : String(error))
+    } finally {
+      sendLockedRef.current = false
+      textareaRef.current?.focus()
+    }
   }
 
   const showSlashHelp = () => {
@@ -266,9 +285,8 @@ export function InputBar({ onSend, onCommand, onAbort, onSlashAction, busy }: In
             <button
               type="button"
               title="添加附件"
-              disabled={busy}
               onClick={() => fileInputRef.current?.click()}
-              className="flex h-7 items-center rounded-full px-1.5 text-muted-foreground transition-colors hover:bg-muted disabled:opacity-50 sm:h-8 sm:px-2"
+              className="flex h-7 items-center rounded-full px-1.5 text-muted-foreground transition-colors hover:bg-muted sm:h-8 sm:px-2"
             >
               <Paperclip className="h-3.5 w-3.5" />
             </button>
@@ -281,11 +299,10 @@ export function InputBar({ onSend, onCommand, onAbort, onSlashAction, busy }: In
             onKeyDown={handleKeyDown}
             placeholder={placeholder}
             className="min-h-[56px] max-h-[40vh] flex-1 resize-none border-0 bg-transparent py-1 text-sm leading-relaxed focus-visible:ring-0 focus-visible:ring-offset-0 sm:min-h-[72px]"
-            disabled={busy}
           />
           <div className="shrink-0 pb-0.5 sm:pb-1">
             {busy ? (
-              <Button aria-label="停止生成" title="停止生成" size="icon" variant="destructive" onClick={onAbort} className="h-8 w-8 rounded-full sm:h-9 sm:w-9">
+              <Button aria-label="停止生成" title="停止生成（Esc）" size="icon" variant="destructive" onClick={onAbort} className="h-8 w-8 rounded-full sm:h-9 sm:w-9">
                 <Square className="h-4 w-4" />
               </Button>
             ) : (
