@@ -1,6 +1,6 @@
 {
   "name": "mimo-code-webui",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Cross-platform web UI for MiMo-Code",
   "type": "module",
   "private": true,
