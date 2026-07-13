@@ -2,6 +2,7 @@ import { AuthRequiredError, createEventStream } from "@/api/client"
 import { getRecentMessages, getTodos } from "@/api/session"
 import { getSessionDiff } from "@/api/session"
 import { listPermissions, listQuestions } from "@/api/message"
+import { getStreamRevision, isCurrentStreamRevision, recordStreamEvent } from "@/lib/streamRevision"
 import type { Message, PermissionRequest, QuestionRequest, SnapshotFileDiff, StreamEvent } from "@/types"
 import { useAppDispatch, useAppState } from "@/stores/appStore"
 import { useEffect, useRef } from "react"
@@ -29,6 +30,7 @@ export function useStreamingMessage() {
     createEventStream(
       abort.signal,
       (event: StreamEvent) => {
+        recordStreamEvent()
         handleEvent(event, dispatch, {
           getActiveSessionID: () => activeSessionRef.current,
           getActiveDirectory: () => activeDirectoryRef.current,
@@ -80,6 +82,7 @@ async function syncAuthoritativeSnapshot(
   signal: AbortSignal,
   isCurrent: () => boolean,
 ) {
+  const revision = getStreamRevision()
   try {
     const [messages, todos, permissions, questions] = await Promise.all([
       getRecentMessages(sessionID, directory),
@@ -87,7 +90,7 @@ async function syncAuthoritativeSnapshot(
       listPermissions(directory),
       listQuestions(directory),
     ])
-    if (signal.aborted || !isCurrent()) return
+    if (signal.aborted || !isCurrent() || !isCurrentStreamRevision(revision)) return
     dispatch({ type: "SET_MESSAGES", sessionID, messages })
     dispatch({ type: "SET_TODOS", sessionID, todos })
     dispatch({ type: "SET_PENDING_PERMISSIONS", permissions })
@@ -95,8 +98,8 @@ async function syncAuthoritativeSnapshot(
     const latestUserMessage = [...messages].reverse().find((message) => message.role === "user")
     if (latestUserMessage) {
       const diff = await getSessionDiff(sessionID, latestUserMessage.id, directory)
-      if (!signal.aborted && isCurrent()) dispatch({ type: "SET_SESSION_DIFF", sessionID, diff })
-    } else if (isCurrent()) {
+      if (!signal.aborted && isCurrent() && isCurrentStreamRevision(revision)) dispatch({ type: "SET_SESSION_DIFF", sessionID, diff })
+    } else if (isCurrent() && isCurrentStreamRevision(revision)) {
       dispatch({ type: "SET_SESSION_DIFF", sessionID, diff: [] })
     }
   } catch (error) {
@@ -123,9 +126,10 @@ function syncSessionSnapshot(
       if (context.isSessionBusy(sessionID)) {
         return
       }
+      const revision = getStreamRevision()
       try {
         const [messages, todos] = await Promise.all([getRecentMessages(sessionID, directory), getTodos(sessionID, directory)])
-        if (context.signal.aborted) return
+        if (context.signal.aborted || !isCurrentStreamRevision(revision)) return
         dispatch({ type: "SET_MESSAGES", sessionID, messages })
         dispatch({ type: "SET_TODOS", sessionID, todos })
       } catch (error) {

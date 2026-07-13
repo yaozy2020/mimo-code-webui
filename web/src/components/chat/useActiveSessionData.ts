@@ -1,6 +1,7 @@
 import { useEffect } from "react"
 import { getRecentMessages, getSessionDiff, getTodos } from "@/api/session"
 import { listPermissions, listQuestions } from "@/api/message"
+import { getStreamRevision, isCurrentStreamRevision } from "@/lib/streamRevision"
 import { useAppDispatch } from "@/stores/appStore"
 import type { Message } from "@/types"
 
@@ -66,26 +67,25 @@ export function useActiveSessionData(input: { activeSessionID: string | null; ac
     let cancelled = false
     const refresh = async () => {
       if (document.visibilityState !== "visible") return
+      const revision = getStreamRevision()
       try {
-        const todos = await getTodos(activeSessionID, activeDirectory)
-        if (!cancelled) {
-          dispatch({ type: "SET_TODOS", sessionID: activeSessionID, todos })
-        }
-        const [permissions, questions] = await Promise.all([listPermissions(activeDirectory), listQuestions(activeDirectory)])
-        if (!cancelled) {
-          dispatch({ type: "SET_PENDING_PERMISSIONS", permissions })
-          dispatch({ type: "SET_PENDING_QUESTIONS", questions })
-        }
-        const msgs = await getRecentMessages(activeSessionID, activeDirectory)
-        if (!cancelled) {
-          dispatch({ type: "SET_MESSAGES", sessionID: activeSessionID, messages: msgs })
-          const messageID = latestUserMessageID(msgs)
-          if (messageID) {
-            const diff = await getSessionDiff(activeSessionID, messageID, activeDirectory)
-            if (!cancelled) dispatch({ type: "SET_SESSION_DIFF", sessionID: activeSessionID, diff })
-          } else {
-            dispatch({ type: "SET_SESSION_DIFF", sessionID: activeSessionID, diff: [] })
-          }
+        const [todos, permissions, questions, msgs] = await Promise.all([
+          getTodos(activeSessionID, activeDirectory),
+          listPermissions(activeDirectory),
+          listQuestions(activeDirectory),
+          getRecentMessages(activeSessionID, activeDirectory),
+        ])
+        if (cancelled || !isCurrentStreamRevision(revision)) return
+        dispatch({ type: "SET_TODOS", sessionID: activeSessionID, todos })
+        dispatch({ type: "SET_PENDING_PERMISSIONS", permissions })
+        dispatch({ type: "SET_PENDING_QUESTIONS", questions })
+        dispatch({ type: "SET_MESSAGES", sessionID: activeSessionID, messages: msgs })
+        const messageID = latestUserMessageID(msgs)
+        if (messageID) {
+          const diff = await getSessionDiff(activeSessionID, messageID, activeDirectory)
+          if (!cancelled && isCurrentStreamRevision(revision)) dispatch({ type: "SET_SESSION_DIFF", sessionID: activeSessionID, diff })
+        } else {
+          dispatch({ type: "SET_SESSION_DIFF", sessionID: activeSessionID, diff: [] })
         }
       } catch (error) {
         console.error("[ChatArea] failed to refresh:", error)
